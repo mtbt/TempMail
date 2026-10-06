@@ -16,7 +16,7 @@ Built with ASP.NET Core / Blazor Interactive Server, Bootstrap 5.3.8, EF Core + 
 
 ## Scope and production acceptance
 
-This is source code and deployment automation, **not an already-provisioned production server**. Validate it in your Windows/SQL/IIS environment and complete the checklist below before exposing it publicly. The minimal SMTP receiver does not implement STARTTLS, DKIM/SPF/DMARC validation or malware scanning. Senders that require encrypted SMTP will not deliver. Only signature-checked raster CID images render inline; other MIME parts remain downloads. Single Web worker / single SMTP instance only; not a distributed service. See [security](docs/security.md), [SMTP](docs/smtp.md) and [validation results](docs/validation.md).
+This is source code and deployment automation, **not an already-provisioned production server**. Validate it in your Windows/SQL/IIS environment and complete the checklist below before exposing it publicly. The SMTP receiver supports optional STARTTLS with TLS 1.2/1.3 using a Windows Certificate Store certificate or PFX. Configure a valid certificate to advertise STARTTLS; `RequireStartTls` defaults to false for Internet inbound compatibility. DKIM/SPF/DMARC validation and malware scanning are not implemented. Only signature-checked raster CID images render inline; other MIME parts remain downloads. Single Web worker / single SMTP instance only; not a distributed service. See [security](docs/security.md), [SMTP](docs/smtp.md) and [validation results](docs/validation.md).
 
 ## Architecture
 
@@ -166,6 +166,9 @@ Both appsettings.json files show all defaults. Nested environment names use `__`
 | MaxConcurrentMessages | 4 concurrent DATA/parse/storage operations |
 | MessagesPerMinutePerIp | 30 |
 | CommandTimeoutSeconds / ConnectionLifetimeSeconds | 60 / 300 |
+| Smtp:RequireStartTls | false; reject plaintext MAIL/RCPT/DATA with 530 when enabled |
+| Smtp:TlsHandshakeTimeoutSeconds | 15 (1–120), bounded by connection lifetime |
+| Smtp:Tls | Certificate Store/PFX settings; see [SMTP TLS configuration](docs/smtp.md#tls-configuration) |
 | Logging:FilePath | logs/web-.log or logs/smtp-.log, daily and 50 MB rolling, retain 14 files |
 
 Username: case-insensitive 3–40 ASCII characters, letters/digits/dot/dash/underscore, first/last alphanumeric, no repeated dots. The stricter dot rules improve SMTP interoperability. Unspecified local part uses 64 random bits rendered as 16 lower-case hex characters; access uses a separate 256-bit token.
@@ -224,5 +227,5 @@ Serilog logs requests and SMTP envelope/connection metadata, not body, cookies o
 - [ ] Backup configured
 - [ ] SQL migrations reviewed/applied and Windows service identities least-privileged
 - [ ] One IIS worker; non-overlapping recycling; Web kept active for background work
-- [ ] SMTP plaintext limitation accepted or TLS reception provided
+- [ ] SMTP certificate/renewal/ACL configured, TLS 1.2/1.3 and optional plaintext policy verified
 - [ ] SQL Server concurrency, restart/restore and external Gmail/Outlook delivery validated in staging

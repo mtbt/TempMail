@@ -1,6 +1,8 @@
 using System.Collections.Concurrent;
 using System.Net;
 using System.Net.Sockets;
+using System.Net.Security;
+using System.Security.Authentication;
 using System.Text;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -13,6 +15,8 @@ using TempMail.Infrastructure;
 namespace TempMail.SmtpServer;
 public sealed class SmtpWorker(IServiceScopeFactory scopes, IOptions<SmtpOptions> options, ILogger<SmtpWorker> log) : BackgroundService
 {
+    private readonly SmtpTlsCertificate tlsCertificate = new(options.Value);
+    public override void Dispose() { base.Dispose(); tlsCertificate.Dispose(); processing.Dispose(); }
     private readonly SmtpOptions o = options.Value;
     private readonly ConcurrentDictionary<long, Task> clients = new();
     private readonly Dictionary<string, IpBudget> budgets = new();
@@ -90,7 +94,8 @@ public sealed class SmtpWorker(IServiceScopeFactory scopes, IOptions<SmtpOptions
         {
             lifetime.CancelAfter(TimeSpan.FromSeconds(o.ConnectionLifetimeSeconds));
             var ct = lifetime.Token;
-            var stream = client.GetStream();
+            Stream stream = client.GetStream();
+            SslStream? tlsStream = null;
             var reader = new SmtpLineReader(stream);
             async Task Reply(string value) => await stream.WriteAsync(Encoding.ASCII.GetBytes(value + "\r\n"), ct);
             async Task<byte[]?> Read(int max)
@@ -103,7 +108,7 @@ public sealed class SmtpWorker(IServiceScopeFactory scopes, IOptions<SmtpOptions
             try
             {
                 await Reply("220 TempMail receive-only ESMTP");
-                bool greeted = false;
+                bool greeted = false, extendedGreeting = false, secure = false;
                 string? from = null;
                 var recipients = new List<string>();
                 while (await Read(512) is { } commandBytes)
@@ -113,12 +118,50 @@ public sealed class SmtpWorker(IServiceScopeFactory scopes, IOptions<SmtpOptions
                     var split = line.IndexOf(' ');
                     var command = (split < 0 ? line : line[..split]).ToUpperInvariant();
                     var arg = split < 0 ? "" : line[(split + 1)..].Trim();
+                    if (o.RequireStartTls && !secure && command is "MAIL" or "RCPT" or "DATA")
+                    { await Reply("530 5.7.0 Must issue STARTTLS first"); continue; }
                     switch (command)
                     {
                         case "EHLO": case "HELO":
                             if (arg.Length == 0) { await Reply("501 Hostname required"); break; }
-                            greeted = true; from = null; recipients.Clear();
-                            await Reply(command == "EHLO" ? $"250-TempMail\r\n250-SIZE {o.MaxMessageSizeMB * 1024L * 1024}\r\n250 8BITMIME" : "250 TempMail"); break;
+                            if (secure && !greeted && command != "EHLO") { await Reply("503 Send EHLO after STARTTLS"); break; }
+                            greeted = true; extendedGreeting = command == "EHLO"; from = null; recipients.Clear();
+                            await Reply(command == "EHLO" ? $"250-TempMail\r\n250-SIZE {o.MaxMessageSizeMB * 1024L * 1024}\r\n{(!secure && tlsCertificate.IsAvailable ? "250-STARTTLS\r\n" : "")}250 8BITMIME" : "250 TempMail"); break;
+                        case "STARTTLS":
+                            if (arg.Length != 0) { await Reply("501 STARTTLS takes no arguments"); break; }
+                            if (secure) { await Reply("503 TLS already active"); break; }
+                            if (!extendedGreeting) { await Reply("503 Send EHLO first"); break; }
+                            if (!tlsCertificate.IsAvailable) { await Reply("454 4.7.0 TLS unavailable"); break; }
+                            // RFC 3207: discard all pre-TLS knowledge, including buffered plaintext.
+                            greeted = false; extendedGreeting = false; from = null; recipients.Clear();
+                            await Reply("220 2.0.0 Ready to start TLS");
+                            tlsStream = new SslStream(stream, leaveInnerStreamOpen: false);
+                            stream = tlsStream;
+                            reader = new SmtpLineReader(stream);
+                            using (var handshake = CancellationTokenSource.CreateLinkedTokenSource(ct))
+                            {
+                                handshake.CancelAfter(TimeSpan.FromSeconds(o.TlsHandshakeTimeoutSeconds));
+                                var watch = System.Diagnostics.Stopwatch.StartNew();
+                                log.LogInformation("SMTP TLS handshake started {RemoteIp}", ip);
+                                try
+                                {
+                                    await tlsStream.AuthenticateAsServerAsync(new SslServerAuthenticationOptions
+                                    {
+                                        ServerCertificate = tlsCertificate.Certificate,
+                                        EnabledSslProtocols = SslProtocols.Tls12 | SslProtocols.Tls13,
+                                        ClientCertificateRequired = false,
+                                        AllowRenegotiation = false
+                                    }, handshake.Token);
+                                    secure = true;
+                                    log.LogInformation("SMTP TLS handshake succeeded {RemoteIp} {Protocol} {CipherSuite} {ElapsedMs}", ip, tlsStream.SslProtocol, tlsStream.NegotiatedCipherSuite, watch.ElapsedMilliseconds);
+                                }
+                                catch (Exception ex)
+                                {
+                                    log.LogWarning("SMTP TLS handshake failed {RemoteIp} {ErrorType} {ElapsedMs}", ip, ex.GetType().Name, watch.ElapsedMilliseconds);
+                                    return; // Never send plaintext or resume SMTP after a failed handshake.
+                                }
+                            }
+                            break;
                         case "NOOP": await Reply("250 OK"); break;
                         case "QUIT": await Reply("221 Bye"); return;
                         case "RSET": from = null; recipients.Clear(); await Reply("250 Reset"); break;
@@ -195,7 +238,7 @@ public sealed class SmtpWorker(IServiceScopeFactory scopes, IOptions<SmtpOptions
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { log.LogInformation("SMTP connection timed out or stopped {RemoteIp}", ip); }
             catch (IOException) { log.LogInformation("SMTP peer disconnected {RemoteIp}", ip); }
             catch (Exception ex) { log.LogError("SMTP session failed {ErrorType} {RemoteIp}", ex.GetType().Name, ip); }
-            finally { log.LogInformation("SMTP disconnected {RemoteIp}", ip); }
+            finally { tlsStream?.Dispose(); log.LogInformation("SMTP disconnected {RemoteIp}", ip); }
         }
     }
     public static string? ParsePath(string arg, string prefix, bool allowEmpty)
