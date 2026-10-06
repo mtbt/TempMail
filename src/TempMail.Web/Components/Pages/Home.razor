@@ -1,0 +1,83 @@
+@page "/"
+@page "/inbox/{PublicId:guid}"
+@rendermode InteractiveServer
+@inherits ApiComponent
+@implements IAsyncDisposable
+<PageTitle>Temp Mail — Hộp thư tạm thời</PageTitle>
+<section class="hero text-center py-4"><div class="eyebrow">HỘP THƯ CỦA RIÊNG BẠN</div><h1>Email tạm thời, thật đơn giản.</h1><p class="text-secondary">Tự chọn địa chỉ. Nhận thư trực tiếp. Không cần đăng ký.</p></section>
+@if (Error != null) { <div class="alert alert-danger" role="alert">@Error</div> }
+@if (!Ready) { <p class="text-center" role="status">Đang tải hộp thư…</p> }
+else if (Mailbox == null)
+{
+    <section class="card shadow-sm mx-auto address-card"><div class="card-body p-4"><h2 class="h5">Chọn địa chỉ email</h2>
+    <label class="form-label" for="local">Tên email (để trống để tạo ngẫu nhiên)</label>
+    <div class="row g-2"><div class="col-sm-7"><input id="local" class="form-control" placeholder="namhoang" maxlength="40" @bind="Local" /></div><div class="col-sm-5"><select class="form-select" aria-label="Domain" @bind="Domain">@foreach (var domain in Domains) { <option>@domain</option> }</select></div></div>
+    <p class="small text-secondary mt-2">3–40 ký tự: a–z, 0–9, dấu chấm, gạch ngang hoặc gạch dưới. Bắt đầu/kết thúc bằng chữ hoặc số.</p>
+    <button class="btn btn-primary w-100" disabled="@(Busy || Domains.Length == 0)" @onclick="Create">@(Busy ? "Đang tạo…" : "Tạo email")</button>
+    @if (Domains.Length == 0) { <p class="mt-2">Chưa có domain hoạt động. Quản trị viên cần cấu hình domain.</p> }</div></section>
+}
+else
+{
+    <section class="card shadow-sm address-card mx-auto"><div class="card-body p-4 text-center">
+    <span class="small text-secondary">ĐỊA CHỈ EMAIL TẠM THỜI</span><div class="email-address my-3">@Mailbox.Address</div>
+    <div class="d-flex flex-wrap gap-2 justify-content-center"><button class="btn btn-primary" @onclick="Copy">@(Copied ? "Đã copy ✓" : "Copy địa chỉ")</button><button class="btn btn-outline-secondary" disabled="@Busy" @onclick="Change">Đổi địa chỉ</button><button class="btn btn-outline-danger" disabled="@Busy" @onclick="Clear">Xóa inbox</button></div>
+    <div class="mt-3 small">Hết hạn sau: <strong>@Remaining</strong> @if (Mailbox.CanExtend) { <button class="btn btn-link btn-sm" disabled="@Busy" @onclick="Extend">Gia hạn</button> }</div></div></section>
+    <section class="mt-5"><div class="d-flex justify-content-between align-items-center mb-3"><h2 class="h4 mb-0">Inbox <span class="badge rounded-pill text-bg-light">@Messages.Length</span></h2><div><span class="small text-secondary me-2">@Connection</span><button class="btn btn-sm btn-outline-secondary" @onclick="Refresh">Làm mới</button></div></div>
+    @if (NewMail) { <div class="alert alert-success" role="status">Inbox vừa được cập nhật.</div> }
+    @if (Messages.Length == 0) { <div class="card p-5 text-center text-secondary"><span class="empty-icon">✉</span><h3 class="h5 mt-3">Đang chờ email đầu tiên</h3><p class="mb-0">Thư mới sẽ tự động xuất hiện tại đây.</p></div> }
+    else { <div class="list-group">@foreach (var message in Messages) { <button class="list-group-item list-group-item-action p-3" @onclick="() => Open(message.Id)"><div class="d-flex justify-content-between gap-2"><strong class="text-truncate">@(string.IsNullOrWhiteSpace(message.FromName) ? message.FromAddress : message.FromName)</strong><time class="small text-secondary text-nowrap">@message.ReceivedAt.ToString("HH:mm 'UTC'")</time></div><div class="d-flex justify-content-between"><span class="text-truncate">@(message.Subject.Length == 0 ? "(Không có tiêu đề)" : message.Subject)</span><span class="small text-secondary">@(message.HasAttachments ? "📎" : "") @((message.Size / 1024.0).ToString("N1")) KB</span></div></button> }</div> }
+    </section>
+}
+@if (Selected != null)
+{
+    <section class="card mt-4"><div class="card-body"><div class="d-flex justify-content-between"><h2 class="h4">@Selected.Subject</h2><button class="btn btn-sm btn-outline-secondary" @onclick="() => Selected = null">Đóng</button></div><p class="small text-secondary">@Selected.FromName &lt;@Selected.FromAddress&gt;<br />To: @Selected.To<br />Cc: @Selected.Cc</p>
+    <div class="d-flex gap-2 mb-3"><button class="btn btn-sm btn-outline-secondary" @onclick="() => ShowHtml = !ShowHtml">@(ShowHtml ? "Xem text" : "Xem HTML an toàn")</button>@if (ShowHtml) { <button class="btn btn-sm btn-outline-warning" @onclick="() => ExternalImages = !ExternalImages">@(ExternalImages ? "Chặn hình ảnh bên ngoài" : "Hiển thị hình ảnh bên ngoài (có thể bị theo dõi)")</button> }<button class="btn btn-sm btn-outline-danger" @onclick="DeleteMessage">Xóa thư</button></div>
+    @if (ShowHtml) { <iframe class="email-frame" title="Nội dung email đã lọc" sandbox="" referrerpolicy="no-referrer" src="@($"/api/messages/{Selected.Id}/html?images={ExternalImages.ToString().ToLowerInvariant()}")"></iframe> }
+    else { <pre class="email-text">@Selected.TextBody</pre> }
+    @if (Selected.Attachments.Length > 0) { <h3 class="h6 mt-3">Tệp đính kèm — chỉ tải khi tin cậy người gửi</h3><ul>@foreach (var a in Selected.Attachments) { <li><a href="@($"/api/messages/{Selected.Id}/attachments/{a.Id}")" download>@a.FileName</a> (@a.Size bytes) @(a.ContentId != null ? "· inline" : "")</li> }</ul> }
+    </div></section>
+}
+@code {
+    [Parameter] public Guid? PublicId { get; set; }
+    private MailboxDto? Mailbox;
+    private MessageSummary[] Messages = [];
+    private MessageDto? Selected;
+    private string[] Domains = [];
+    private string Domain = "", Local = "", Remaining = "", Connection = "Đang kết nối…";
+    private bool Ready, Copied, NewMail, ShowHtml, ExternalImages;
+    private DotNetObjectReference<Home>? reference;
+    protected override async Task OnAfterRenderAsync(bool first)
+    {
+        if (!first) return;
+        await Act(async () => { await JS.InvokeVoidAsync("tempMail.init"); Domains = await Api<string[]>("/api/domains") ?? []; Domain = Domains.FirstOrDefault() ?? ""; reference = DotNetObjectReference.Create(this); await LoadCurrent(); await JS.InvokeVoidAsync("tempMail.watch", reference); });
+        Ready = true; StateHasChanged();
+    }
+    private async Task LoadCurrent()
+    {
+        var r = await JS.InvokeAsync<ApiResponse>("tempMail.api", "/api/mailboxes/current", "GET", null);
+        if (r.Status == 404) { Mailbox = null; Messages = []; return; }
+        if (!r.Ok) throw new InvalidOperationException("Không tải được hộp thư.");
+        Mailbox = r.Data.Deserialize<MailboxDto>(Json);
+        if (PublicId.HasValue && Mailbox?.PublicId != PublicId) { Mailbox = null; throw new InvalidOperationException("Bạn không có quyền truy cập hộp thư này."); }
+        await LoadMessages();
+    }
+    private async Task LoadMessages() { if (Mailbox != null) Messages = await Api<MessageSummary[]>("/api/messages") ?? []; if (Selected != null && !Messages.Any(x => x.Id == Selected.Id)) Selected = null; }
+    private Task Create() => Act(async () => { Mailbox = await Api<MailboxDto>("/api/mailboxes", "POST", new CreateMailboxRequest(Local, Domain)); await LoadMessages(); await JS.InvokeVoidAsync("tempMail.join"); });
+    private Task Refresh() => Act(LoadCurrent);
+    private Task Change() => Act(async () => { if (!await JS.InvokeAsync<bool>("confirm", "Xóa hộp thư hiện tại và tất cả email để đổi địa chỉ?")) return; await Api<object>("/api/mailboxes/current", "DELETE"); Mailbox = null; Selected = null; Messages = []; });
+    private Task Clear() => Act(async () => { if (!await JS.InvokeAsync<bool>("confirm", "Xóa toàn bộ email trong inbox?")) return; await Api<object>("/api/mailboxes/current/messages", "DELETE"); Selected = null; await LoadMessages(); });
+    private Task Extend() => Act(async () => Mailbox = await Api<MailboxDto>("/api/mailboxes/current/extend", "POST"));
+    private Task Copy() => Act(async () => { await JS.InvokeVoidAsync("tempMail.copy", Mailbox!.Address); Copied = true; });
+    private Task Open(Guid id) => Act(async () => { Selected = await Api<MessageDto>($"/api/messages/{id}"); ShowHtml = false; ExternalImages = false; NewMail = false; });
+    private Task DeleteMessage() => Act(async () => { await Api<object>($"/api/messages/{Selected!.Id}", "DELETE"); Selected = null; await LoadMessages(); });
+    [JSInvokable] public async Task InboxChanged() { await Act(LoadCurrent); NewMail = true; await InvokeAsync(StateHasChanged); }
+    [JSInvokable] public Task Tick(string connection)
+    {
+        Connection = connection;
+        var left = (Mailbox?.ExpiresAt ?? DateTime.UtcNow) - DateTime.UtcNow;
+        Remaining = left > TimeSpan.Zero ? $"{(int)left.TotalHours:00}:{left.Minutes:00}:{left.Seconds:00}" : "Đã hết hạn";
+        if (Mailbox != null && left <= TimeSpan.Zero) { Mailbox = null; Selected = null; Messages = []; }
+        return InvokeAsync(StateHasChanged);
+    }
+    public async ValueTask DisposeAsync() { try { await JS.InvokeVoidAsync("tempMail.stop"); } catch (JSDisconnectedException) { } reference?.Dispose(); }
+}

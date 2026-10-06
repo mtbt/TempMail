@@ -1,0 +1,11 @@
+namespace TempMail.Shared;
+public sealed record CreateMailboxRequest(string? LocalPart, string Domain);
+public sealed record MailboxDto(Guid PublicId, string Address, DateTime ExpiresAt, bool CanExtend);
+public sealed record AttachmentDto(Guid Id, string FileName, string ContentType, long Size, string? ContentId);
+public sealed record MessageSummary(Guid Id, string FromAddress, string FromName, string Subject, DateTime ReceivedAt, long Size, bool HasAttachments);
+public sealed record MessageDto(Guid Id, string FromAddress, string FromName, string To, string Cc, string Subject, string TextBody, string HtmlBody, DateTime ReceivedAt, AttachmentDto[] Attachments);
+public sealed record LoginRequest(string Email, string Password);
+public sealed record DomainRequest(string DomainName, bool IsActive = true);
+public sealed record RuleRequest(string Kind, string Value);
+public sealed record SessionDto(string RequestToken);
+public sealed record ProblemDto(string? Title, string? Detail);

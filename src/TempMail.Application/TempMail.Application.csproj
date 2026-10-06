@@ -1,0 +1,6 @@
+<Project Sdk="Microsoft.NET.Sdk">
+<ItemGroup>
+<ProjectReference Include="../TempMail.Domain/TempMail.Domain.csproj" />
+<ProjectReference Include="../TempMail.Shared/TempMail.Shared.csproj" />
+</ItemGroup>
+</Project>

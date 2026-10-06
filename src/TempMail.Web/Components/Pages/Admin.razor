@@ -1,0 +1,47 @@
+@page "/admin"
+@rendermode InteractiveServer
+@inherits ApiComponent
+<PageTitle>Temp Mail — Quản trị</PageTitle>
+<h1 class="h3 mb-4">Quản trị hệ thống</h1>
+@if (Error != null) { <div class="alert alert-danger" role="alert">@Error</div> }
+@if (!Ready) { <p role="status">Đang tải trang quản trị…</p> }
+else if (!LoggedIn)
+{
+    <div class="card address-card p-4"><h2 class="h5">Đăng nhập quản trị</h2><label class="form-label" for="admin-email">Email</label><input id="admin-email" class="form-control mb-3" type="email" autocomplete="username" @bind="Email" @bind:event="oninput" /><label class="form-label" for="admin-password">Mật khẩu</label><input id="admin-password" class="form-control mb-3" type="password" autocomplete="current-password" @bind="Password" @bind:event="oninput" /><button class="btn btn-primary" disabled="@Busy" @onclick="Login">Đăng nhập</button></div>
+}
+else
+{
+    <div class="d-flex gap-2 mb-3"><button class="btn btn-outline-primary" @onclick="Reload">Cập nhật</button><button class="btn btn-outline-secondary" @onclick="Logout">Đăng xuất</button></div>
+    <div class="row g-3 mb-4">@foreach (var item in Stats) { <div class="col-6 col-lg-3"><div class="card p-3"><span class="small text-secondary">@item.Key</span><strong class="fs-4">@item.Value</strong></div></div> }</div>
+    <div class="row g-4"><section class="col-lg-6"><h2 class="h5">Domain nhận email</h2><div class="input-group mb-3"><input aria-label="Domain mới" class="form-control" @bind="NewDomain" placeholder="mail.example.com" /><button class="btn btn-primary" disabled="@Busy" @onclick="AddDomain">Thêm</button></div><ul class="list-group">@foreach (var d in Domains) { <li class="list-group-item"><strong>@d.DomainName</strong><div class="float-end"><button class="btn btn-sm btn-outline-secondary" @onclick="() => Toggle(d)">@(d.IsActive ? "Tắt" : "Bật")</button> <button class="btn btn-sm btn-outline-danger" @onclick="() => RemoveDomain(d.Id)">Xóa</button></div></li> }</ul></section>
+    <section class="col-lg-6"><h2 class="h5">Chặn người gửi / tên dành riêng</h2><select aria-label="Loại quy tắc" class="form-select mb-2" @bind="Kind"><option value="sender">Email người gửi</option><option value="sender-domain">Domain người gửi</option><option value="recipient">Tên người nhận</option><option value="reserved">Tên dành riêng</option></select><div class="input-group mb-3"><input class="form-control" aria-label="Giá trị quy tắc" @bind="RuleValue" /><button class="btn btn-primary" disabled="@Busy" @onclick="AddRule">Thêm</button></div><p class="small">Tên dành riêng từ cấu hình: @string.Join(", ", ConfiguredReserved)</p><ul class="list-group">@foreach (var rule in Rules) { <li class="list-group-item">@rule.Kind: @rule.Value <button class="btn btn-sm btn-outline-danger float-end" @onclick="() => RemoveRule(rule.Id)">Xóa</button></li> }</ul></section></div>
+    <h2 class="h5 mt-4">Email theo ngày / giờ (UTC)</h2><p class="small text-secondary">Thống kê trên thư còn được lưu; thư đã xóa/hết hạn không được tính.</p><div class="row"><div class="col-md-6"><table class="table"><thead><tr><th>Ngày</th><th>Email</th></tr></thead><tbody>@foreach (var d in Daily) { <tr><td>@d.GetProperty("day").GetDateTime().ToString("yyyy-MM-dd")</td><td>@d.GetProperty("count")</td></tr> }</tbody></table></div><div class="col-md-6"><table class="table"><thead><tr><th>Giờ hôm nay</th><th>Email</th></tr></thead><tbody>@foreach (var h in Hourly) { <tr><td>@h.GetProperty("hour"):00</td><td>@h.GetProperty("count")</td></tr> }</tbody></table></div></div>
+}
+@code {
+    private bool LoggedIn, Ready;
+    private string Email = "", Password = "", NewDomain = "", Kind = "sender", RuleValue = "";
+    private AdminDomain[] Domains = [];
+    private AdminRule[] Rules = [];
+    private string[] ConfiguredReserved = [];
+    private Dictionary<string, string> Stats = [];
+    private JsonElement[] Daily = [], Hourly = [];
+    protected override async Task OnAfterRenderAsync(bool first) { if (first) { await Act(async () => { await JS.InvokeVoidAsync("tempMail.init"); var r = await JS.InvokeAsync<ApiResponse>("tempMail.api", "/api/admin/dashboard", "GET", null); if (r.Ok) { LoggedIn = true; await Load(); } }); Ready = true; StateHasChanged(); } }
+    private Task Login() => Act(async () => { try { await Api<object>("/api/admin/login", "POST", new LoginRequest(Email, Password)); } finally { Password = ""; } await JS.InvokeVoidAsync("tempMail.init"); LoggedIn = true; await Load(); });
+    private Task Logout() => Act(async () => { await Api<object>("/api/admin/logout", "POST"); LoggedIn = false; await JS.InvokeVoidAsync("tempMail.init"); });
+    private Task Reload() => Act(Load);
+    private async Task Load()
+    {
+        var d = await Api<JsonElement>("/api/admin/dashboard");
+        Stats = new() { ["Mailbox hoạt động"] = d.GetProperty("activeMailboxes").ToString(), ["Email hôm nay"] = d.GetProperty("messagesToday").ToString(), ["Kết nối SMTP"] = d.GetProperty("smtpConnections").ToString(), ["Attachment (MB)"] = (d.GetProperty("storageBytes").GetInt64() / 1048576.0).ToString("N1"), ["SMTP heartbeat"] = d.GetProperty("smtpHealthy").GetBoolean() ? "Hoạt động" : "Không sẵn sàng" };
+        Daily = d.GetProperty("daily").EnumerateArray().ToArray(); Hourly = d.GetProperty("hourly").EnumerateArray().ToArray();
+        Domains = await Api<AdminDomain[]>("/api/admin/domains") ?? [];
+        var rules = await Api<JsonElement>("/api/admin/rules"); Rules = rules.GetProperty("rules").Deserialize<AdminRule[]>(Json) ?? []; ConfiguredReserved = rules.GetProperty("configuredReservedNames").Deserialize<string[]>(Json) ?? [];
+    }
+    private Task AddDomain() => Act(async () => { await Api<object>("/api/admin/domains", "POST", new DomainRequest(NewDomain)); NewDomain = ""; await Load(); });
+    private Task Toggle(AdminDomain d) => Act(async () => { await Api<object>($"/api/admin/domains/{d.Id}", "PUT", new DomainRequest(d.DomainName, !d.IsActive)); await Load(); });
+    private Task RemoveDomain(Guid id) => Act(async () => { await Api<object>($"/api/admin/domains/{id}", "DELETE"); await Load(); });
+    private Task AddRule() => Act(async () => { await Api<object>("/api/admin/rules", "POST", new RuleRequest(Kind, RuleValue)); RuleValue = ""; await Load(); });
+    private Task RemoveRule(int id) => Act(async () => { await Api<object>($"/api/admin/rules/{id}", "DELETE"); await Load(); });
+    private sealed record AdminDomain(Guid Id, string DomainName, bool IsActive);
+    private sealed record AdminRule(int Id, string Kind, string Value);
+}

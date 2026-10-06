@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "dependencies": {
+    "net10.0": {
+      "tempmail.domain": {
+        "type": "Project"
+      },
+      "tempmail.shared": {
+        "type": "Project"
+      }
+    }
+  }
+}

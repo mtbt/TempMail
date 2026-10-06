@@ -1,0 +1,39 @@
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.AspNetCore.Mvc.Testing;
+using Microsoft.Data.Sqlite;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using TempMail.Domain;
+using TempMail.Infrastructure;
+namespace TempMail.IntegrationTests;
+public sealed class MailFactory : WebApplicationFactory<Program>
+{
+    public string Root { get; } = Path.Combine(Path.GetTempPath(), "tempmail-test-" + Guid.NewGuid().ToString("N"));
+    private SqliteConnection? connection;
+    protected override void ConfigureWebHost(IWebHostBuilder builder)
+    {
+        Directory.CreateDirectory(Root);
+        builder.UseEnvironment("Testing");
+        builder.UseStaticWebAssets();
+        builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?> {
+            ["TempMail:StoragePath"] = Path.Combine(Root, "storage"), ["TempMail:DataProtectionPath"] = Path.Combine(Root, "keys"),
+            ["Security:IpHashKey"] = "integration-test-only-key-32-characters-minimum", ["TempMail:CreateRequestsPerMinute"] = "1000", ["TempMail:DeleteRequestsPerMinute"] = "1000", ["TempMail:ReadRequestsPerMinute"] = "10000", ["TempMail:MaxMailboxesPerIp"] = "100", ["TempMail:CleanupIntervalSeconds"] = "3600", ["AllowedHosts"] = "localhost;127.0.0.1"
+        }));
+        builder.ConfigureServices(services =>
+        {
+            services.RemoveAll<DbContextOptions<MailDbContext>>();
+            services.RemoveAll<IDbContextOptionsConfiguration<MailDbContext>>();
+            services.RemoveAll<MailDbContext>();
+            connection = new SqliteConnection("Data Source=" + Path.Combine(Root, "mail.db"));
+            connection.Open();
+            services.AddDbContext<MailDbContext>(o => o.UseSqlite(connection.ConnectionString));
+            using var db = new MailDbContext(new DbContextOptionsBuilder<MailDbContext>().UseSqlite(connection).Options);
+            db.Database.EnsureCreated(); db.Domains.Add(new MailDomain { DomainName = "mail.example.com" }); db.SaveChanges();
+        });
+    }
+    public HttpClient Browser() => CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://localhost"), AllowAutoRedirect = false, HandleCookies = true });
+    protected override void Dispose(bool disposing) { base.Dispose(disposing); if (disposing) { connection?.Dispose(); if (Directory.Exists(Root)) Directory.Delete(Root, true); } }
+}
