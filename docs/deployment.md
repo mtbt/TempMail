@@ -1,6 +1,8 @@
 # Windows Server 2022/2025 deployment
 
-Run administrative commands from an elevated PowerShell console. Replace example paths, hostnames and certificates. Production deployment is an operator action; source code/build tests do not provision Windows, public DNS or a SQL Server instance.
+Use the ordered [production checklist](production-checklist.md) as the release gate. All real Windows, SQL, certificate and external SMTP checks require operator acceptance.
+
+Run administrative commands from an elevated Windows PowerShell 5.1 console. Keep `common.ps1` alongside the installers. Replace example paths, hostnames and certificates. Production deployment is an operator action; source code/build tests do not provision Windows, public DNS or a SQL Server instance.
 
 ## 1. Prerequisites
 
@@ -118,11 +120,11 @@ Generate the HMAC key using a cryptographic generator, and write it directly int
   -SitePath C:\Sites\TempMail -StoragePath D:\TempMailStorage -KeyPath D:\TempMailKeys
 ```
 
-The script installs IIS features, optionally installs a supplied signed Hosting Bundle, creates **No Managed Code** application pool, configures profile loading, a single worker and non-overlapping recycling, copies published files preserving local settings/logs, binds 80/443 with SNI and grants minimum folder access. Set the site to start only after configuration/migrations/bootstrap. `AllowedHosts` must match the site. HTTPS redirection/HSTS are enabled outside Development/Testing. Bind a valid public HTTPS certificate and configure automatic renewal.
+The script installs IIS features, optionally installs a supplied signed Hosting Bundle, creates **No Managed Code** application pool, configures profile loading, a single worker and non-overlapping recycling, copies published files preserving local settings/logs, binds 80/443 with SNI and grants minimum folder access. The installers stop both applications and disable IIS site/pool auto-start until configuration/migrations/bootstrap are complete. They replace ACLs recursively on dedicated paths, reject overlapping paths/reparse points, and reject unexpected existing site/service identities or bindings. Back up first; custom backup-account grants must be reviewed and re-applied. Copy retries are bounded; local configuration/logs are preserved and private-key files are excluded. `AllowedHosts` must match the site. HTTPS redirection/HSTS are enabled outside Development/Testing. Bind a valid public HTTPS certificate and configure automatic renewal.
 
 For production Data Protection, Windows user-scope DPAPI protects persisted keys by default; the app-pool identity/profile must remain stable. For portability and disaster recovery, configure `TempMail__DataProtectionCertificateThumbprint` with a dedicated certificate in the Windows certificate store and grant its private key read permission to the Web pool. Back up/export this certificate securely. Restrict keys to the Web identity, SYSTEM and administrators. Do not give SMTP access to keys. Never place keys under the application/static-content directory.
 
-ACL the private storage and log directories to required Web/SMTP identities only. Remove inherited broad Users/Everyone permissions if the parent volume grants them. Runtime identities need RX on binaries, Modify on their logs, Web Modify on keys, and both Modify on attachment storage (cleanup runs in Web). Protect appsettings.Local.json from ordinary local users; only administrators should modify deployment/configuration. The script does not infer or change all existing organization ACL policies.
+ACL the private storage and log directories to required Web/SMTP identities only. Remove inherited broad Users/Everyone permissions if the parent volume grants them. Runtime identities need RX on binaries, Modify on their logs, Web Modify on keys, and both Modify on attachment storage (cleanup runs in Web). Protect appsettings.Local.json from ordinary local users; only administrators should modify deployment/configuration. Installers manage only the explicitly supplied dedicated trees and replace their DACLs (including existing descendants). They do not configure certificate private-key ACLs or custom external log directories. Do not use shared organization directories as installer targets.
 
 ## 6. Seed and initial admin
 
@@ -147,6 +149,9 @@ try {
 The command seeds configured domains and Admin role and creates one admin; it does not start Web, migrate schema, print credentials or reset an existing account. Password must satisfy Identity's policy (14+ characters, upper/lower/digit/symbol). Use a unique random password. `dotnet TempMail.Web.dll --seed` seeds domains/role without an account and is repeatable. Existing domains are not re-enabled by reseeding. Domain changes can then be managed in `/admin`. There is no public registration, default password or email-based password reset in a receive-only system.
 
 ```powershell
+Set-ItemProperty 'IIS:\AppPools\TempMail' -Name autoStart -Value $true
+Set-ItemProperty 'IIS:\Sites\TempMail' -Name serverAutoStart -Value $true
+Start-WebAppPool TempMail
 Start-Website TempMail
 Invoke-WebRequest https://tempmail.example.com/health/ready
 ```
@@ -155,13 +160,17 @@ Invoke-WebRequest https://tempmail.example.com/health/ready
 
 ```powershell
 .\deployment\install-smtp-service.ps1 -PublishPath C:\Publish\TempMail.Smtp `
-  -ServicePath C:\Services\TempMail.Smtp -StoragePath D:\TempMailStorage
-# Finish protected configuration and SQL permissions, then:
+  -ServicePath C:\Services\TempMail.Smtp -StoragePath D:\TempMailStorage -KeyPath D:\TempMailKeys
+# Installer stops Web too. Finish configuration, SQL and certificate ACLs, then:
+Set-ItemProperty 'IIS:\AppPools\TempMail' -Name autoStart -Value $true
+Set-ItemProperty 'IIS:\Sites\TempMail' -Name serverAutoStart -Value $true
+Start-WebAppPool TempMail
+Start-Website TempMail
 Start-Service TempMailSmtp
 Get-Service TempMailSmtp
 ```
 
-Display name: **TempMail SMTP Service**. The script creates service `TempMailSmtp` under its virtual service account and configures delayed auto-start and restart after failure. It copies only published files, preserves local config/logs, grants private storage access and does not run as LocalSystem. For remote SQL use an appropriate domain service identity. Manual equivalent:
+Display name: **TempMail SMTP Service**. The script creates service `TempMailSmtp` under its virtual service account and configures delayed auto-start and restart after failure. It copies only published files, preserves local config/logs, grants private storage access and does not run as LocalSystem. Install IIS first so the shared storage ACL can resolve both identities. Existing identity/path mismatches require a reviewed manual migration. For remote SQL use an appropriate domain service identity and review the installers/ACLs for that identity; do not silently replace a gMSA with the default virtual account. Manual equivalent:
 
 ```powershell
 sc.exe create TempMailSmtp binPath= '"C:\Services\TempMail.Smtp\TempMail.SmtpServer.exe"' start= delayed-auto obj= 'NT SERVICE\TempMailSmtp' DisplayName= 'TempMail SMTP Service'
@@ -169,7 +178,7 @@ sc.exe failure TempMailSmtp reset= 86400 actions= restart/5000/restart/15000/res
 sc.exe failureflag TempMailSmtp 1
 ```
 
-SMTP uses AppContext.BaseDirectory, so it does not accidentally read configuration relative to `C:\Windows\System32`. Check `logs/smtp-*.log` or configured absolute log path. Admin dashboard and authenticated `/api/admin/smtp-health` show the database heartbeat (fresh within 30 seconds). Public `/health/ready` checks Web DB schema access and real storage write/delete; `/health/live` is only process liveness.
+SMTP uses AppContext.BaseDirectory, so it does not accidentally read configuration relative to `C:\Windows\System32`. Relative SMTP log paths resolve against the executable directory, not SCM's working directory. Check `logs/smtp-*.log` or the configured absolute log path. Both processes rotate daily/at 50 MB and retain 14 files (not 14 days); provision and restrict custom external log directories separately. Admin dashboard and authenticated `/api/admin/smtp-health` show the database heartbeat (fresh within 30 seconds). Public `/health/ready` checks Web DB schema access and real storage write/delete; `/health/live` is only process liveness.
 
 ### SMTP STARTTLS certificate (separate from IIS)
 
@@ -193,9 +202,9 @@ Open inbound 25 for SMTP, 443 for Web, 80 for HTTPS redirect/certificate HTTP ch
 
 ## 9. Backup, upgrade and rollback
 
-- Back up SQL database plus attachment storage as a consistent set. Pause receiving/cleanup or take coordinated snapshots; file writes precede DB commit. Encrypt backups and limit retention for disposable mail.
+- Back up SQL database plus attachment storage as a consistent set. Stop SMTP and the IIS site/app pool (including cleanup), or take coordinated snapshots; file writes precede DB commit. Encrypt backups and limit retention for disposable mail.
 - Back up protected config, Data Protection key ring and any certificate/private key required to restore it. Record service identities/ACLs, certificate renewal, firewall and DNS. Test restoration onto a non-public host.
-- For upgrades: build/test/publish to staging, review migration SQL, back up, stop SMTP and IIS site, apply migration with migration identity, copy new binaries while preserving local configuration/keys/storage, start Web, verify readiness, start SMTP, verify heartbeat and external delivery. Do not overwrite key rings. Keep previous binaries and compatible database backup.
+- For upgrades: build/test/publish to staging, review migration SQL, back up, stop SMTP, IIS site and app pool, apply migration with migration identity, copy new binaries while preserving local configuration/keys/storage, start Web, verify readiness, start SMTP, verify heartbeat and external delivery. Do not overwrite key rings. Keep previous binaries and compatible database backup.
 - Rollback only when schema compatibility is known; otherwise restore the tested backup set. Never apply automatic destructive down-migrations to recover a failed release.
 - SQL Express has no SQL Agent; schedule SQL backups through Task Scheduler or your backup system. Monitor backup success and free space.
 
