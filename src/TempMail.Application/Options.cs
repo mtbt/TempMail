@@ -33,10 +33,23 @@ public sealed class SmtpOptions
     [Range(1, 1000)] public int MessagesPerMinutePerIp { get; set; } = 30;
     [Range(5, 300)] public int CommandTimeoutSeconds { get; set; } = 60;
     [Range(30, 1800)] public int ConnectionLifetimeSeconds { get; set; } = 300;
+    public bool RequireStartTls { get; set; } = false;
+    [Range(1, 120)] public int TlsHandshakeTimeoutSeconds { get; set; } = 15;
+    public SmtpTlsOptions Tls { get; set; } = new();
     public bool RejectUnknownMailbox { get; set; } = true;
 }
 
 public sealed class SecurityOptions
 {
     [Required, MinLength(32)] public string IpHashKey { get; set; } = "";
+}
+
+public sealed class SmtpTlsOptions
+{
+    public string? ServerName { get; set; }
+    public string? CertificateThumbprint { get; set; }
+    public string StoreName { get; set; } = "My";
+    public string StoreLocation { get; set; } = "LocalMachine";
+    public string? PfxPath { get; set; }
+    public string? PfxPassword { get; set; }
 }

@@ -171,13 +171,25 @@ sc.exe failureflag TempMailSmtp 1
 
 SMTP uses AppContext.BaseDirectory, so it does not accidentally read configuration relative to `C:\Windows\System32`. Check `logs/smtp-*.log` or configured absolute log path. Admin dashboard and authenticated `/api/admin/smtp-health` show the database heartbeat (fresh within 30 seconds). Public `/health/ready` checks Web DB schema access and real storage write/delete; `/health/live` is only process liveness.
 
+### SMTP STARTTLS certificate (separate from IIS)
+
+IIS HTTPS bindings do not configure SMTP. Install a publicly trusted certificate covering the MX hostname (e.g. `mail.example.com`) with its private key in **Certificates (Local Computer) → Personal → Certificates** (`certlm.msc`). Install the issuer's intermediates in Intermediate Certification Authorities. Use Server Authentication EKU and a modern RSA/ECDSA key. In **All Tasks → Manage Private Keys**, grant Read to `NT SERVICE\TempMailSmtp` (or the configured gMSA); do not grant broad Users/Everyone access or give SMTP access to the Web Data Protection key.
+
+Put `Smtp:Tls:ServerName`, `CertificateThumbprint`, `StoreName=My`, `StoreLocation=LocalMachine` in the SMTP service's protected `appsettings.Local.json`; see the full [TLS configuration](smtp.md#tls-configuration). Keep `RequireStartTls=false` for normal public inbound SMTP. A certificate configuration error blocks service startup instead of silently dropping TLS. Check service logs under the real identity, not only an administrator's interactive session.
+
+For PFX deployments, use an absolute path outside both applications/web roots, restrict file read to the service identity and administrators, and supply `Smtp__Tls__PfxPassword` through a protected service-specific environment or secret deployment system. Never commit the password or pass it on a command line. Do not configure both PFX and a thumbprint. Test ephemeral-key import on the target Windows/Schannel version; prefer the Certificate Store for Windows production.
+
+Windows Server 2022/2025 Schannel provides TLS 1.3 subject to OS policy. The application allows only TLS 1.2/1.3; do not weaken OS TLS/cipher policy to accommodate legacy clients. Verify negotiated protocol, certificate hostname and complete trust chain from an external host using the OpenSSL commands in [smtp.md](smtp.md#tls-acceptance-checks). Verify TLS 1.2 and 1.3, old-protocol rejection, local delivery and non-local relay rejection. IIS HTTPS must also remain valid independently.
+
+Automate certificate renewal with your approved CA tooling, monitor expiry and handshake failures, then update the configured thumbprint/PFX, grant the new private key ACL, and `Restart-Service TempMailSmtp`. The certificate is a startup snapshot; changing a file/store/config alone does not reload it. Verify advertisement and external handshake after each renewal. Do not remove the old certificate until the new one has passed checks; rollback by restoring the previous valid configuration and restarting. No database migration is needed for STARTTLS.
+
 ## 8. Firewall, DNS, end-to-end test
 
 ```powershell
 .\deployment\firewall.ps1
 ```
 
-Open inbound 25 for SMTP, 443 for Web, 80 for HTTPS redirect/certificate HTTP challenges where needed. Configure provider firewall/NAT too. Do not expose 1433. Follow [dns.md](dns.md) and [smtp.md](smtp.md), including an external port-25 probe. Create a mailbox in the UI, send real mail, confirm inbox update without page reload, inspect HTML and attachments and verify expiry. Verify non-local RCPT gets 550. Before public launch, accept the documented SMTP plaintext limitation or deploy an appropriate TLS receiver.
+Open inbound 25 for SMTP, 443 for Web, 80 for HTTPS redirect/certificate HTTP challenges where needed. Configure provider firewall/NAT too. Do not expose 1433. Follow [dns.md](dns.md) and [smtp.md](smtp.md), including an external port-25 probe. Create a mailbox in the UI, send real mail, confirm inbox update without page reload, inspect HTML and attachments and verify expiry. Verify non-local RCPT gets 550. Before public launch, configure and externally verify SMTP STARTTLS and explicitly choose the optional/required TLS policy described in [smtp.md](smtp.md).
 
 ## 9. Backup, upgrade and rollback
 
