@@ -137,7 +137,11 @@ date, sanitized evidence and result for every stage. Keep secrets out of evidenc
 - [ ] For PFX instead, configure an absolute PfxPath outside application/data/key
   directories; restrict file read to SMTP/system/admins and protect PfxPassword in
   service-specific secret configuration. Never configure both Store and PFX sources.
-  Verify ephemeral PFX import with Windows/Schannel and the actual service account.
+  Keep passwords outside Git, logs and command lines; keep the PFX file ACL-protected.
+  Windows uses `DefaultKeySet` because Schannel requires an OS-backed key handle
+  for `SslStream`; imports are neither marked exportable nor given `PersistKeySet`.
+  Verify default key-storage access and real STARTTLS handshakes under the actual
+  service account, plus certificate disposal on shutdown (temporary key cleanup).
 - [ ] Verify TLS 1.2 and 1.3, old-protocol rejection, hostname/chain/public trust,
   fresh EHLO/envelope reset, handshake failure closure and encrypted local delivery.
   Use external `openssl s_client -starttls smtp -connect mail.example.com:25

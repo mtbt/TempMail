@@ -38,5 +38,29 @@ public sealed class MailFactory : WebApplicationFactory<Program>
         });
     }
     public HttpClient Browser() => CreateClient(new WebApplicationFactoryClientOptions { BaseAddress = new Uri("https://localhost"), AllowAutoRedirect = false, HandleCookies = true });
-    protected override void Dispose(bool disposing) { base.Dispose(disposing); if (disposing) { connection?.Dispose(); if (Directory.Exists(Root)) Directory.Delete(Root, true); } }
+    protected override void Dispose(bool disposing)
+    {
+        try { base.Dispose(disposing); }
+        finally
+        {
+            if (disposing)
+            {
+                connection?.Dispose();
+                SqliteConnection.ClearAllPools();
+                // Windows can briefly retain SQLite/log handles after host disposal.
+                // Bound retries; leftover test files must not fail a functional test.
+                for (var attempt = 0; attempt < 5; attempt++)
+                {
+                    try
+                    {
+                        if (Directory.Exists(Root)) Directory.Delete(Root, true);
+                        break;
+                    }
+                    catch (IOException) { }
+                    catch (UnauthorizedAccessException) { }
+                    if (attempt < 4) Thread.Sleep(100);
+                }
+            }
+        }
+    }
 }

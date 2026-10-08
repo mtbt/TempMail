@@ -43,7 +43,12 @@ public sealed class SmtpTlsCertificate : IDisposable
             else
             {
                 if (!Path.IsPathFullyQualified(tls.PfxPath!)) throw new InvalidOperationException();
-                certificate = X509CertificateLoader.LoadPkcs12FromFile(tls.PfxPath!, tls.PfxPassword, X509KeyStorageFlags.EphemeralKeySet);
+                // Schannel needs an OS-backed key handle for SslStream. Do not make
+                // imported keys exportable or persist them beyond certificate disposal.
+                var keyStorageFlags = OperatingSystem.IsWindows()
+                    ? X509KeyStorageFlags.DefaultKeySet
+                    : X509KeyStorageFlags.EphemeralKeySet;
+                certificate = X509CertificateLoader.LoadPkcs12FromFile(tls.PfxPath!, tls.PfxPassword, keyStorageFlags);
             }
             if (!certificate.HasPrivateKey || DateTime.UtcNow < certificate.NotBefore.ToUniversalTime() ||
                 DateTime.UtcNow >= certificate.NotAfter.ToUniversalTime() || !certificate.MatchesHostname(tls.ServerName!)) throw new InvalidOperationException();
