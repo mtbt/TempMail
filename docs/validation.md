@@ -84,3 +84,49 @@ The cloud could read the Microsoft SQL Server image manifest but downloading lay
 Not executed here: SQL Server schema application against a real server, Windows PowerShell/IIS installation, Windows Service registration/recovery, production Data Protection certificate/DPAPI recovery, external DNS/MX/firewall reachability or Gmail/Outlook delivery. Complete those staging acceptance checks before public launch. STARTTLS is now implemented; see the current validation above and smtp.md for TLS deployment checks.
 
 Generated evidence (ignored build/test artifacts): `tests/*/TestResults/*.trx`, `artifacts/inbox-desktop.png`, `artifacts/inbox-mobile.png`, `artifacts/admin-mobile.png`. Production deployment guidance and threat controls are in deployment.md and security.md.
+
+## Mailbox / OTP automation validation (2026-10-08)
+
+Baseline: `9182224e8b3e7f34aed3d82be660589abb1f952b` (PR #2 HEAD).
+See the [automation API contract](automation-api.md).
+
+Final commands were run sequentially with .NET SDK 10.0.401:
+
+- `dotnet restore`: passed without audit overrides or NU1900.
+- `dotnet build -c Release`: passed, 0 warnings and 0 errors.
+- `dotnet test -c Release`: 50 unit tests passed; 62 integration tests passed;
+  2 existing opt-in tests skipped (SQL Server connection and Chromium smoke
+  configuration absent). No tests removed, disabled, or filtered.
+- `dotnet ef migrations has-pending-model-changes --project src/TempMail.Infrastructure`:
+  no model changes since the last migration. No migration added.
+- `git diff --check`: passed.
+- Tracked/new-file scan: no private-key files, private-key blocks, or known
+  credential-prefix findings; tracked `ExternalApi:Token` remains empty.
+  Test credentials and documentation placeholders are nonproduction values.
+- Relative README/docs links: all targets exist.
+
+Added 16 OTP/extractor unit cases and 31 integration cases covering header-only
+shared authentication, fail-closed configuration, token-free responses/logging,
+input/domain/reserved-name validation, normalized idempotency, expiry/recreation,
+quota/default lifetime, ten concurrent HTTP creators, independent rate limits,
+latest-only selection and deterministic ties, response privacy, and a real TCP
+SMTP reject-before-POST / accept-after-POST / GET-code workflow. The existing
+SQL Server opt-in test now also exercises ten concurrent automation allocators;
+that SQL Server extension was not executed in this environment.
+
+One intermediate full run exposed an intermittent existing
+`ApiTests.HealthAndBlazorPageRender` failure: `Home.DisposeAsync` attempts JavaScript
+interop during static prerender disposal. The source at that frame is unchanged
+from baseline. A separate baseline full run passed, and the final full feature
+run also passed; the intermittent issue was not reproduced on baseline and was
+not fixed or suppressed in this change. The initial new rate-limit tests also
+caught early configuration capture; automation policies now resolve validated
+options from DI and all those tests pass.
+
+Network-enabled sandbox invocations were needed for NuGet and VSTest sockets.
+The final runs did not encounter VSTest SocketException (13), use `--no-restore`,
+or alter project configuration to suppress audit/network failures.
+
+SMTP server, ReceiveService, cleanup, retention, Data Protection, Identity,
+existing UI components, and migration/model files have no source diff from the
+requested baseline. STARTTLS and anti-relay regression tests remain in the suite.

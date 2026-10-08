@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Options;
 using Serilog;
 using TempMail.Application;
 using TempMail.Infrastructure;
@@ -36,6 +37,16 @@ builder.Services.AddRazorComponents().AddInteractiveServerComponents();
 builder.Services.AddSignalR(o => { o.MaximumReceiveMessageSize = 4096; o.EnableDetailedErrors = false; });
 builder.Services.AddRateLimiter(o =>
 {
+    foreach (var policy in new[] { "automation-create", "automation-read" })
+        o.AddPolicy(policy, c =>
+        {
+            var limits = c.RequestServices.GetRequiredService<IOptions<TempMailOptions>>().Value;
+            return RateLimitPartition.GetFixedWindowLimiter(c.Connection.RemoteIpAddress?.ToString() ?? "unknown", _ => new FixedWindowRateLimiterOptions
+            {
+                PermitLimit = policy == "automation-create" ? limits.CreateRequestsPerMinute : limits.ReadRequestsPerMinute,
+                Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true
+            });
+        });
     o.RejectionStatusCode = 429;
     o.OnRejected = async (c, ct) => await Results.Problem(statusCode: 429, title: "Too many requests.").ExecuteAsync(c.HttpContext);
     foreach (var pair in new[] { ("create", settings.CreateRequestsPerMinute), ("delete", settings.DeleteRequestsPerMinute), ("read", settings.ReadRequestsPerMinute), ("login", 5) })
@@ -77,17 +88,19 @@ app.Use(async (context, next) =>
     await next();
 });
 app.UseRouting();
+app.UseMiddleware<ExternalApiTokenMiddleware>();
 app.UseRateLimiter();
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseAntiforgery();
 app.Use(async (context, next) =>
 {
-    if (context.Request.Path.StartsWithSegments("/api") && HttpMethods.IsGet(context.Request.Method) == false && HttpMethods.IsHead(context.Request.Method) == false && HttpMethods.IsOptions(context.Request.Method) == false)
+    if (context.GetEndpoint()?.Metadata.GetMetadata<ExternalApiAttribute>() == null && context.Request.Path.StartsWithSegments("/api") && HttpMethods.IsGet(context.Request.Method) == false && HttpMethods.IsHead(context.Request.Method) == false && HttpMethods.IsOptions(context.Request.Method) == false)
         await context.RequestServices.GetRequiredService<IAntiforgery>().ValidateRequestAsync(context);
     await next();
 });
 app.MapMailApi();
+app.MapExternalApi();
 app.MapHub<MailHub>("/mailhub").RequireRateLimiting("read");
 app.MapGet("/health/live", () => Results.Ok(new { status = "alive" }));
 app.MapHealthChecks("/health").RequireRateLimiting("read");

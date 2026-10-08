@@ -9,3 +9,7 @@ public sealed record DomainRequest(string DomainName, bool IsActive = true);
 public sealed record RuleRequest(string Kind, string Value);
 public sealed record SessionDto(string RequestToken);
 public sealed record ProblemDto(string? Title, string? Detail);
+
+public sealed record EnsureMailboxRequest(string? Email);
+public sealed record EnsureMailboxResponse(string Email, bool Created);
+public sealed record LatestCodeResponse(string? Code);

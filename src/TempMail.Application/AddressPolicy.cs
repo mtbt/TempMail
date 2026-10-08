@@ -11,6 +11,14 @@ public static partial class AddressPolicy
 {
     [GeneratedRegex(@"^[a-z0-9][a-z0-9._-]{1,38}[a-z0-9]$", RegexOptions.CultureInvariant)]
     private static partial Regex LocalRegex();
+    public static string NormalizeAddress(string? value)
+    {
+        var address = value?.Trim().ToLowerInvariant() ?? "";
+        var at = address.IndexOf('@');
+        if (at < 1 || at != address.LastIndexOf('@') || !IsValidLocal(address[..at]) || !IsValidDomain(address[(at + 1)..]))
+            throw new MailPolicyException("Invalid email address.");
+        return address;
+    }
     public static string NormalizeLocal(string value) => value.Trim().ToLowerInvariant();
     public static bool IsValidLocal(string value) => LocalRegex().IsMatch(value) && !value.Contains("..", StringComparison.Ordinal);
     public static bool IsValidDomain(string value) => value.Length <= 253 && value.Contains('.') && Uri.CheckHostName(value) == UriHostNameType.Dns && value.All(c => c < 128) && !value.EndsWith('.');

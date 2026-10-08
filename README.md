@@ -231,3 +231,7 @@ Serilog logs requests and SMTP envelope/connection metadata, not body, cookies o
 - [ ] One IIS worker; non-overlapping recycling; Web kept active for background work
 - [ ] SMTP certificate/renewal/ACL configured, TLS 1.2/1.3 and optional plaintext policy verified
 - [ ] SQL Server concurrency, restart/restore and external Gmail/Outlook delivery validated in staging
+
+## Automation API
+
+See [mailbox and OTP automation](docs/automation-api.md) for shared-token configuration, contracts, limits, and the required POST-before-send workflow.
