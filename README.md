@@ -16,6 +16,8 @@ Built with ASP.NET Core / Blazor Interactive Server, Bootstrap 5.3.8, EF Core + 
 
 ## Scope and production acceptance
 
+Follow the ordered [Windows production checklist](docs/production-checklist.md) from clean server through Internet delivery and backup/restore.
+
 This is source code and deployment automation, **not an already-provisioned production server**. Validate it in your Windows/SQL/IIS environment and complete the checklist below before exposing it publicly. The SMTP receiver supports optional STARTTLS with TLS 1.2/1.3 using a Windows Certificate Store certificate or PFX. Configure a valid certificate to advertise STARTTLS; `RequireStartTls` defaults to false for Internet inbound compatibility. DKIM/SPF/DMARC validation and malware scanning are not implemented. Only signature-checked raster CID images render inline; other MIME parts remain downloads. Single Web worker / single SMTP instance only; not a distributed service. See [security](docs/security.md), [SMTP](docs/smtp.md) and [validation results](docs/validation.md).
 
 ## Architecture
