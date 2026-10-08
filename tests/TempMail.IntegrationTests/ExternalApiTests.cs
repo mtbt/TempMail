@@ -10,6 +10,11 @@ using TempMail.Domain;
 using TempMail.Infrastructure;
 using TempMail.Shared;
 namespace TempMail.IntegrationTests;
+[CollectionDefinition("External API logging", DisableParallelization = true)]
+public sealed class ExternalApiLoggingCollection { }
+
+// Web hosts share Serilog's static logger; other factories must not replace it mid-test.
+[Collection("External API logging")]
 public sealed class ExternalApiTests : IClassFixture<MailFactory>
 {
     private readonly MailFactory factory;
@@ -49,7 +54,16 @@ public sealed class ExternalApiTests : IClassFixture<MailFactory>
         Assert.Equal(HttpStatusCode.Unauthorized, (await Get(c, Address())).StatusCode);
         c.DefaultRequestHeaders.Remove("X-Api-Token"); c.DefaultRequestHeaders.Add("X-Api-Token", f.ExternalToken);
         Assert.Equal(HttpStatusCode.Created, (await Post(c, Address())).StatusCode);
-        var files = Directory.GetFiles(Path.Combine(f.Root, "logs"), "*.log"); Assert.NotEmpty(files);
+        var logDirectory = Path.Combine(f.Root, "logs");
+        string[] files = [];
+        var wait = System.Diagnostics.Stopwatch.StartNew();
+        while (true)
+        {
+            if (Directory.Exists(logDirectory)) files = Directory.GetFiles(logDirectory, "*.log");
+            if (files.Length > 0 || wait.Elapsed >= TimeSpan.FromSeconds(5)) break;
+            await Task.Delay(50);
+        }
+        Assert.NotEmpty(files);
         foreach (var file in files)
         {
             using var stream = File.Open(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
