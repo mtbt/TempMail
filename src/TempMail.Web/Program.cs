@@ -25,7 +25,10 @@ foreach (var privatePath in new[] { settings.StoragePath, settings.DataProtectio
         throw new InvalidOperationException("Private storage and Data Protection keys must be outside wwwroot.");
 var protection = builder.Services.AddDataProtection().SetApplicationName("TempMail.Web.v1");
 if (!string.IsNullOrWhiteSpace(settings.DataProtectionPath)) protection.PersistKeysToFileSystem(new DirectoryInfo(settings.DataProtectionPath));
-if (!string.IsNullOrWhiteSpace(settings.DataProtectionCertificateThumbprint)) protection.ProtectKeysWithCertificate(settings.DataProtectionCertificateThumbprint);
+using var dataProtectionCertificate = !string.IsNullOrWhiteSpace(settings.DataProtectionCertificateThumbprint)
+    ? DataProtectionCertificate.Load(settings.DataProtectionCertificateThumbprint)
+    : null;
+if (dataProtectionCertificate is not null) protection.ProtectKeysWithCertificate(dataProtectionCertificate);
 else if (OperatingSystem.IsWindows() && !builder.Environment.IsDevelopment()) protection.ProtectKeysWithDpapi();
 builder.Services.AddIdentity<IdentityUser, IdentityRole>(o => { o.Password.RequiredLength = 14; o.Password.RequireNonAlphanumeric = true; o.Lockout.MaxFailedAccessAttempts = 5; o.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(15); o.User.RequireUniqueEmail = true; }).AddEntityFrameworkStores<MailDbContext>().AddDefaultTokenProviders();
 builder.Services.ConfigureApplicationCookie(o => { o.Cookie.Name = "__Host-TempMail.Admin"; o.Cookie.SecurePolicy = CookieSecurePolicy.Always; o.Cookie.SameSite = SameSiteMode.Strict; o.ExpireTimeSpan = TimeSpan.FromMinutes(30); o.SlidingExpiration = false; o.Events.OnRedirectToLogin = c => { c.Response.StatusCode = 401; return Task.CompletedTask; }; o.Events.OnRedirectToAccessDenied = c => { c.Response.StatusCode = 403; return Task.CompletedTask; }; });
