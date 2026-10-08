@@ -12,6 +12,9 @@ namespace TempMail.IntegrationTests;
 public sealed class MailFactory : WebApplicationFactory<Program>
 {
     public string Root { get; } = Path.Combine(Path.GetTempPath(), "tempmail-test-" + Guid.NewGuid().ToString("N"));
+    public string? ExternalToken { get; init; } = "automation-integration-test-only";
+    public int CreateLimit { get; init; } = 1000;
+    public int ReadLimit { get; init; } = 10000;
     private SqliteConnection? connection;
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -20,7 +23,7 @@ public sealed class MailFactory : WebApplicationFactory<Program>
         builder.UseStaticWebAssets();
         builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?> {
             ["TempMail:StoragePath"] = Path.Combine(Root, "storage"), ["TempMail:DataProtectionPath"] = Path.Combine(Root, "keys"),
-            ["Security:IpHashKey"] = "integration-test-only-key-32-characters-minimum", ["TempMail:CreateRequestsPerMinute"] = "1000", ["TempMail:DeleteRequestsPerMinute"] = "1000", ["TempMail:ReadRequestsPerMinute"] = "10000", ["TempMail:MaxMailboxesPerIp"] = "100", ["TempMail:CleanupIntervalSeconds"] = "3600", ["AllowedHosts"] = "localhost;127.0.0.1"
+            ["Logging:FilePath"] = Path.Combine(Root, "logs", "web-.log"), ["ExternalApi:Token"] = ExternalToken, ["Security:IpHashKey"] = "integration-test-only-key-32-characters-minimum", ["TempMail:CreateRequestsPerMinute"] = CreateLimit.ToString(), ["TempMail:DeleteRequestsPerMinute"] = "1000", ["TempMail:ReadRequestsPerMinute"] = ReadLimit.ToString(), ["TempMail:MaxMailboxesPerIp"] = "100", ["TempMail:CleanupIntervalSeconds"] = "3600", ["AllowedHosts"] = "localhost;127.0.0.1"
         }));
         builder.ConfigureServices(services =>
         {
