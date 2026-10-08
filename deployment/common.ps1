@@ -56,6 +56,46 @@ function Set-TempMailDirectoryAcl {
     }
 }
 
+function Get-TempMailServiceExecutable {
+    param($Service)
+    if ($Service.StartName -ne 'NT SERVICE\TempMailSmtp') { throw 'Existing SMTP identity differs. Review migration manually.' }
+    # Accept only a bare executable, optionally quoted. Never strip arguments or
+    # accept a different binary when repairing the legacy unquoted registration.
+    $path = [string]$Service.PathName
+    if ($path -match '^"([^"\r\n]+)"$') { $path = $Matches[1] }
+    if ($path -notmatch '^[A-Za-z]:\\[^"\r\n]+\\TempMail\.SmtpServer\.exe$') { throw 'Unexpected SMTP executable/arguments. Review migration manually.' }
+    return [IO.Path]::GetFullPath($path)
+}
+
+function Assert-TempMailServiceRegistration {
+    param([string]$BinaryPath, [switch]$VerifyStartup)
+    $service = Get-CimInstance Win32_Service -Filter "Name='TempMailSmtp'"
+    if (-not $service -or $service.PathName -cne $BinaryPath -or $service.StartName -ne 'NT SERVICE\TempMailSmtp' -or $service.State -ne 'Stopped') {
+        throw 'SMTP registration verification failed: expected quoted path, virtual identity and stopped service.'
+    }
+    if ($VerifyStartup) {
+        $startup = Get-ItemProperty -LiteralPath 'HKLM:\SYSTEM\CurrentControlSet\Services\TempMailSmtp'
+        if ($service.StartMode -ne 'Auto' -or $startup.Start -ne 2 -or $startup.DelayedAutoStart -ne 1) { throw 'SMTP delayed automatic startup verification failed.' }
+    }
+}
+
+function Assert-TempMailIisConfiguration {
+    param([string]$SitePath, [string]$HostName)
+    if (Test-Path 'IIS:\Sites\TempMail') {
+        $site = Get-Item 'IIS:\Sites\TempMail'
+        if ([IO.Path]::GetFullPath($site.physicalPath).TrimEnd('\') -ne [IO.Path]::GetFullPath($SitePath).TrimEnd('\') -or $site.applicationPool -ne 'TempMail') { throw 'Existing site path/pool differs. Review a migration manually.' }
+        if ($HostName) {
+            foreach ($binding in Get-WebBinding -Name TempMail) {
+                if (-not (($binding.protocol -eq 'http' -and $binding.bindingInformation -eq "*:80:$HostName") -or
+                    ($binding.protocol -eq 'https' -and $binding.bindingInformation -eq "*:443:$HostName"))) { throw 'Unexpected existing site bindings; review manually before deployment.' }
+            }
+        }
+    }
+    if (Test-Path 'IIS:\AppPools\TempMail') {
+        if ((Get-Item 'IIS:\AppPools\TempMail').processModel.identityType -ne 'ApplicationPoolIdentity') { throw 'Existing pool identity differs; review SQL, certificate and directory permissions manually.' }
+    }
+}
+
 function Stop-TempMailService {
     $service = Get-Service TempMailSmtp -ErrorAction SilentlyContinue
     if ($service -and $service.Status -ne 'Stopped') {

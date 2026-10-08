@@ -120,7 +120,9 @@ Generate the HMAC key using a cryptographic generator, and write it directly int
   -SitePath C:\Sites\TempMail -StoragePath D:\TempMailStorage -KeyPath D:\TempMailKeys
 ```
 
-The script installs IIS features, optionally installs a supplied signed Hosting Bundle, creates **No Managed Code** application pool, configures profile loading, a single worker and non-overlapping recycling, copies published files preserving local settings/logs, binds 80/443 with SNI and grants minimum folder access. The installers stop both applications and disable IIS site/pool auto-start until configuration/migrations/bootstrap are complete. They replace ACLs recursively on dedicated paths, reject overlapping paths/reparse points, and reject unexpected existing site/service identities or bindings. Back up first; custom backup-account grants must be reviewed and re-applied. Copy retries are bounded; local configuration/logs are preserved and private-key files are excluded. `AllowedHosts` must match the site. HTTPS redirection/HSTS are enabled outside Development/Testing. Bind a valid public HTTPS certificate and configure automatic renewal.
+The script installs IIS features, optionally installs a supplied signed Hosting Bundle, creates **No Managed Code** application pool, configures profile loading, a single worker and non-overlapping recycling, copies published files preserving local settings/logs, binds 80/443 with SNI and grants minimum folder access. Read-only preflight checks run before stopping either application or changing application files/ACLs: publish files, paths/reparse points, existing service identity/executable, HTTPS certificate, supplied installer signature, and existing IIS pool/site/bindings. The IIS path checks include the existing SMTP executable directory; SMTP checks include the existing IIS directory and pool identity. Equal or parent/child overlaps are rejected. If existing IIS cannot be inspected, repair its management tools first. On a clean server without IIS management tools, supply `-HostingBundleInstaller` or complete prerequisites separately; newly installed IIS/ANCM is checked before application deployment. Feature/Hosting Bundle installation can require a reboot and can affect IIS: do this in a maintenance window and rerun afterward.
+
+After preflight/prerequisites, the installers stop both applications and disable IIS site/pool auto-start until configuration/migrations/bootstrap are complete. They replace ACLs recursively on dedicated paths. Back up first; custom backup-account grants must be reviewed and re-applied. Copy retries are bounded; local configuration/logs are preserved and private-key files are excluded. An error after deployment begins does not automatically restart partially updated applications: correct the error and rerun, or restore the coordinated backup before explicit activation. `AllowedHosts` must match the site. HTTPS redirection/HSTS are enabled outside Development/Testing. Bind a valid public HTTPS certificate and configure automatic renewal.
 
 For production Data Protection, Windows user-scope DPAPI protects persisted keys by default; the app-pool identity/profile must remain stable. For portability and disaster recovery, configure `TempMail__DataProtectionCertificateThumbprint` with a dedicated certificate in the Windows certificate store and grant its private key read permission to the Web pool. Back up/export this certificate securely. Restrict keys to the Web identity, SYSTEM and administrators. Do not give SMTP access to keys. Never place keys under the application/static-content directory.
 
@@ -128,27 +130,29 @@ ACL the private storage and log directories to required Web/SMTP identities only
 
 ## 6. Seed and initial admin
 
-Run once from the **deployed Web directory** under an account with appropriate DB permissions and configuration:
+Starting from the repository root, run once in the **deployed Web directory** under an account with appropriate DB permissions and configuration. The block restores the working directory so the following `deployment` commands still resolve:
 
 ```powershell
-Set-Location C:\Sites\TempMail
-# Read initial credentials without placing them in command history.
-$credential = Get-Credential -Message 'Initial TempMail admin (username must be an email address)'
-$env:AdminBootstrap__Email = $credential.UserName
-$env:AdminBootstrap__Password = $credential.GetNetworkCredential().Password
+Push-Location C:\Sites\TempMail -ErrorAction Stop
 try {
+    # Read initial credentials without placing them in command history.
+    $credential = Get-Credential -Message 'Initial TempMail admin (username must be an email address)'
+    $env:AdminBootstrap__Email = $credential.UserName
+    $env:AdminBootstrap__Password = $credential.GetNetworkCredential().Password
     dotnet .\TempMail.Web.dll --bootstrap-admin
     if ($LASTEXITCODE -ne 0) { throw 'Bootstrap failed.' }
 } finally {
     Remove-Item Env:AdminBootstrap__Email -ErrorAction SilentlyContinue
     Remove-Item Env:AdminBootstrap__Password -ErrorAction SilentlyContinue
     $credential = $null
+    Pop-Location
 }
 ```
 
 The command seeds configured domains and Admin role and creates one admin; it does not start Web, migrate schema, print credentials or reset an existing account. Password must satisfy Identity's policy (14+ characters, upper/lower/digit/symbol). Use a unique random password. `dotnet TempMail.Web.dll --seed` seeds domains/role without an account and is repeatable. Existing domains are not re-enabled by reseeding. Domain changes can then be managed in `/admin`. There is no public registration, default password or email-based password reset in a receive-only system.
 
 ```powershell
+Import-Module WebAdministration
 Set-ItemProperty 'IIS:\AppPools\TempMail' -Name autoStart -Value $true
 Set-ItemProperty 'IIS:\Sites\TempMail' -Name serverAutoStart -Value $true
 Start-WebAppPool TempMail
@@ -162,6 +166,7 @@ Invoke-WebRequest https://tempmail.example.com/health/ready
 .\deployment\install-smtp-service.ps1 -PublishPath C:\Publish\TempMail.Smtp `
   -ServicePath C:\Services\TempMail.Smtp -StoragePath D:\TempMailStorage -KeyPath D:\TempMailKeys
 # Installer stops Web too. Finish configuration, SQL and certificate ACLs, then:
+Import-Module WebAdministration
 Set-ItemProperty 'IIS:\AppPools\TempMail' -Name autoStart -Value $true
 Set-ItemProperty 'IIS:\Sites\TempMail' -Name serverAutoStart -Value $true
 Start-WebAppPool TempMail
@@ -170,12 +175,19 @@ Start-Service TempMailSmtp
 Get-Service TempMailSmtp
 ```
 
-Display name: **TempMail SMTP Service**. The script creates service `TempMailSmtp` under its virtual service account and configures delayed auto-start and restart after failure. It copies only published files, preserves local config/logs, grants private storage access and does not run as LocalSystem. Install IIS first so the shared storage ACL can resolve both identities. Existing identity/path mismatches require a reviewed manual migration. For remote SQL use an appropriate domain service identity and review the installers/ACLs for that identity; do not silently replace a gMSA with the default virtual account. Manual equivalent:
+Display name: **TempMail SMTP Service**. The script creates service `TempMailSmtp` under its virtual service account and configures delayed auto-start and restart after failure. It copies only published files, preserves local config/logs, grants private storage access and does not run as LocalSystem. Install IIS first so the shared storage ACL can resolve both identities. Existing identity/path mismatches require a reviewed manual migration. For remote SQL use an appropriate domain service identity and review the installers/ACLs for that identity; do not silently replace a gMSA with the default virtual account.
+
+Registration uses `Win32_Service.Create/Change` via CIM: the quoted executable path is passed as a string, avoiding PowerShell 5.1 native-argument quote loss. A legacy unquoted path is repaired only when its complete path (without arguments) resolves to the same requested executable and its account is already `NT SERVICE\TempMailSmtp`. New services remain manual during setup. After registration the installer reads back the exact quoted `PathName`, identity and stopped state; after ACL/recovery configuration it sets and verifies delayed automatic startup through CIM and the SCM registry values. Rerunning the installer performs the same checks. Use the installer rather than a separate `sc.exe create` command. Inspect the result:
 
 ```powershell
-sc.exe create TempMailSmtp binPath= '"C:\Services\TempMail.Smtp\TempMail.SmtpServer.exe"' start= delayed-auto obj= 'NT SERVICE\TempMailSmtp' DisplayName= 'TempMail SMTP Service'
-sc.exe failure TempMailSmtp reset= 86400 actions= restart/5000/restart/15000/restart/60000
-sc.exe failureflag TempMailSmtp 1
+Get-CimInstance Win32_Service -Filter "Name='TempMailSmtp'" |
+  Select-Object Name, PathName, StartName, StartMode, State
+Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Services\TempMailSmtp' |
+  Select-Object Start, DelayedAutoStart
+sc.exe qc TempMailSmtp
+sc.exe qsidtype TempMailSmtp
+sc.exe qfailure TempMailSmtp
+sc.exe qfailureflag TempMailSmtp
 ```
 
 SMTP uses AppContext.BaseDirectory, so it does not accidentally read configuration relative to `C:\Windows\System32`. Relative SMTP log paths resolve against the executable directory, not SCM's working directory. Check `logs/smtp-*.log` or the configured absolute log path. Both processes rotate daily/at 50 MB and retain 14 files (not 14 days); provision and restrict custom external log directories separately. Admin dashboard and authenticated `/api/admin/smtp-health` show the database heartbeat (fresh within 30 seconds). Public `/health/ready` checks Web DB schema access and real storage write/delete; `/health/live` is only process liveness.

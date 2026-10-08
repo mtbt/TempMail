@@ -26,6 +26,13 @@ date, sanitized evidence and result for every stage. Keep secrets out of evidenc
   and stop both applications. Do not point them at shared organization folders.
   Back up existing data/configuration/ACLs before upgrades. Unexpected identities,
   site paths or bindings require a reviewed manual migration; do not force them.
+- [ ] On staging, test preflight rejection of equal/parent/child overlaps with the
+  existing SMTP executable directory and IIS site, invalid certificates, wrong
+  identities, paths and bindings. Verify no service/site/pool state, application
+  files or ACLs change on these validation failures. Prerequisite installation is
+  a separate mutation phase and may require reboot; application deployment starts
+  only after its checks pass. Test recovery from a copy/ACL failure using the
+  documented rerun/backup procedure before explicitly activating both applications.
 
 ## 2. SQL Server / SQL Server Express and EF Core
 
@@ -100,6 +107,13 @@ date, sanitized evidence and result for every stage. Keep secrets out of evidenc
   `NT SERVICE\TempMailSmtp`, delayed automatic start; verify `sc.exe qsidtype`,
   `sc.exe qfailure` and `sc.exe qfailureflag`. Installer preserves local config/logs,
   bounds copy retries, checks native-command exit codes and leaves the service stopped.
+- [ ] On Windows PowerShell 5.1, install and rerun with both default paths and paths
+  containing spaces. Verify exact quoted `Win32_Service.PathName`, virtual account,
+  `StartMode=Auto`, registry `Start=2` and `DelayedAutoStart=1`. Exercise the legacy
+  unquoted-path repair for the same binary/account; reject different executables,
+  added command-line arguments and different accounts before stopping production.
+  Registration uses CIM, not native `sc.exe` path quoting. Verify a new service is
+  manual during setup and remains stopped until explicit activation.
 - [ ] Configure the same SQL database/storage and synchronized quota/lifetime rules
   as Web. Keep `RejectUnknownMailbox=true`; bind TCP 25 to the intended interface.
   The shared options require an absolute DataProtectionPath, but SMTP must have

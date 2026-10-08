@@ -13,37 +13,48 @@ param(
 $ErrorActionPreference = 'Stop'
 . "$PSScriptRoot\common.ps1"
 Assert-DeploymentPaths @($PublishPath, $SitePath, $StoragePath, $KeyPath)
+$existingService = Get-CimInstance Win32_Service -Filter "Name='TempMailSmtp'"
+if ($existingService) {
+    $smtpPath = Split-Path -Path (Get-TempMailServiceExecutable $existingService) -Parent
+    Assert-DeploymentPaths @($PublishPath, $SitePath, $StoragePath, $KeyPath, $smtpPath)
+}
 $CertificateThumbprint = ($CertificateThumbprint -replace '\s', '').ToUpperInvariant()
 if ($CertificateThumbprint -notmatch '^[0-9A-F]{40}$') { throw 'Supply a SHA-1 certificate thumbprint.' }
 if ($HostName -notmatch '^(?=.{1,253}$)[A-Za-z0-9]+([.-][A-Za-z0-9]+)*$') { throw 'Supply a DNS hostname without port or wildcard.' }
-if (-not (Test-Path "$PublishPath\TempMail.Web.dll") -or -not (Test-Path "$PublishPath\web.config")) { throw 'Publish the Web project first.' }
-# Replacing shared ACLs requires a maintenance window for both applications.
-Stop-TempMailService
+if (-not (Test-Path -LiteralPath "$PublishPath\TempMail.Web.dll" -PathType Leaf) -or -not (Test-Path -LiteralPath "$PublishPath\web.config" -PathType Leaf)) { throw 'Publish the Web project first.' }
+if (-not (Test-Path "Cert:\LocalMachine\My\$CertificateThumbprint")) { throw 'HTTPS certificate missing from LocalMachine\My.' }
+$certificate = Get-Item "Cert:\LocalMachine\My\$CertificateThumbprint"
+if (-not $certificate.HasPrivateKey -or $certificate.NotAfter -le (Get-Date) -or $certificate.NotBefore -gt (Get-Date)) { throw 'HTTPS certificate must be current and have a private key.' }
+if ($HostingBundleInstaller) {
+    if (-not (Test-Path -LiteralPath $HostingBundleInstaller -PathType Leaf)) { throw 'Hosting Bundle installer missing.' }
+    $HostingBundleInstaller = (Get-Item -LiteralPath $HostingBundleInstaller).FullName
+    $signature = Get-AuthenticodeSignature -LiteralPath $HostingBundleInstaller
+    if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'Microsoft Corporation') { throw 'Hosting Bundle signature must be valid and signed by Microsoft.' }
+}
+# Inspect existing IIS before installing features/bundles or stopping production.
+if (Get-Module -ListAvailable WebAdministration) {
+    Import-Module WebAdministration
+    Assert-TempMailIisConfiguration -SitePath $SitePath -HostName $HostName
+    if (-not $HostingBundleInstaller -and -not (Get-WebGlobalModule | Where-Object Name -eq 'AspNetCoreModuleV2')) { throw 'Install the .NET 10 Hosting Bundle (after IIS), then rerun.' }
+} else {
+    if ($existingService -or (Get-Service WAS, W3SVC -ErrorAction SilentlyContinue)) { throw 'Install/repair IIS management tools first; existing deployment cannot be validated safely.' }
+    if (-not $HostingBundleInstaller) { throw 'On a clean server, supply the signed Hosting Bundle installer or install IIS and the Hosting Bundle first.' }
+}
+# Prerequisite installation can require a reboot. No TempMail stop/copy/ACL has
+# occurred; inspect newly installed IIS/ANCM again before application deployment.
 $features = Install-WindowsFeature Web-Server, Web-WebSockets, Web-AppInit, Web-Mgmt-Console -IncludeManagementTools
 if (-not $features.Success) { throw 'IIS feature installation failed.' }
 if ($features.RestartNeeded -eq 'Yes') { throw 'Restart Windows after feature installation, then rerun.' }
 if ($HostingBundleInstaller) {
-    $signature = Get-AuthenticodeSignature $HostingBundleInstaller
-    if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Subject -notmatch 'Microsoft Corporation') { throw 'Hosting Bundle signature must be valid and signed by Microsoft.' }
     $p = Start-Process -FilePath $HostingBundleInstaller -ArgumentList '/install', '/quiet', '/norestart' -Wait -PassThru
     if ($p.ExitCode -notin @(0, 3010)) { throw "Hosting Bundle failed: $($p.ExitCode)" }
     if ($p.ExitCode -eq 3010) { throw 'Hosting Bundle requires a restart; restart Windows and rerun.' }
 }
 Import-Module WebAdministration
 if (-not (Get-WebGlobalModule | Where-Object Name -eq 'AspNetCoreModuleV2')) { throw 'Install the .NET 10 Hosting Bundle (after IIS), then rerun.' }
-if (-not (Test-Path "Cert:\LocalMachine\My\$CertificateThumbprint")) { throw 'HTTPS certificate missing from LocalMachine\My.' }
-$certificate = Get-Item "Cert:\LocalMachine\My\$CertificateThumbprint"
-if (-not $certificate.HasPrivateKey -or $certificate.NotAfter -le (Get-Date) -or $certificate.NotBefore -gt (Get-Date)) { throw 'HTTPS certificate must be current and have a private key.' }
-if (Test-Path 'IIS:\Sites\TempMail') {
-    $site = Get-Item 'IIS:\Sites\TempMail'
-    if ([IO.Path]::GetFullPath($site.physicalPath).TrimEnd('\') -ne [IO.Path]::GetFullPath($SitePath).TrimEnd('\') -or $site.applicationPool -ne 'TempMail') { throw 'Existing site path/pool differs. Review a migration manually.' }
-    foreach ($binding in Get-WebBinding -Name TempMail) {
-        if ($binding.protocol -notin @('http', 'https') -or $binding.bindingInformation -notin @("*:80:$HostName", "*:443:$HostName")) { throw 'Unexpected existing site bindings; review manually before deployment.' }
-    }
-}
-if (Test-Path 'IIS:\AppPools\TempMail') {
-    if ((Get-Item 'IIS:\AppPools\TempMail').processModel.identityType -ne 'ApplicationPoolIdentity') { throw 'Existing pool identity differs; review SQL, certificate and directory permissions manually.' }
-}
+Assert-TempMailIisConfiguration -SitePath $SitePath -HostName $HostName
+# Replacing shared ACLs requires a maintenance window for both applications.
+Stop-TempMailService
 Stop-TempMailWeb
 foreach ($path in @($SitePath, $StoragePath, $KeyPath, "$SitePath\logs")) { New-Item -ItemType Directory -Path $path -Force | Out-Null }
 if (Test-Path 'IIS:\Sites\TempMail') { Stop-Website TempMail }
