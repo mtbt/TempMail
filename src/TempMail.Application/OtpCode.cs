@@ -2,7 +2,9 @@ using System.Text.RegularExpressions;
 namespace TempMail.Application;
 public static partial class OtpCode
 {
-    [GeneratedRegex(@"(?<!\d)\d{6}(?!\d)", RegexOptions.CultureInvariant, 1000)]
+    // Fixed-width matching; Unicode decimal digits also block numeric substrings.
+    // NonBacktracking does not support the boundary lookarounds.
+    [GeneratedRegex(@"(?<!\p{Nd})[0-9]{6}(?!\p{Nd})", RegexOptions.CultureInvariant, 1000)]
     private static partial Regex CodeRegex();
     public static string? Find(string text)
     {

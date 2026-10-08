@@ -10,7 +10,8 @@ public sealed class EmailHtml
         // Parse inertly: no browsing context, scripting, or resource loader is enabled.
         var parser = new HtmlParser();
         using var source = parser.ParseDocument(html);
-        foreach (var hidden in source.QuerySelectorAll("script,style,template,noscript,head,[hidden],[aria-hidden=true]")) hidden.Remove();
+        foreach (var hidden in source.QuerySelectorAll("script,style,template,noscript,head")) hidden.Remove();
+        RemoveHiddenSubtrees(source);
         using var safe = parser.ParseDocument(Sanitize(source.Body?.InnerHtml ?? ""));
         var text = new StringBuilder();
         if (safe.Body != null) AppendText(safe.Body, text);
@@ -24,9 +25,19 @@ public sealed class EmailHtml
         foreach (var child in node.ChildNodes) AppendText(child, text);
         if (block) text.Append('\n');
     }
+    private static void RemoveHiddenSubtrees(IDocument source)
+    {
+        foreach (var element in source.QuerySelectorAll("[hidden],[aria-hidden]"))
+            if (element.HasAttribute("hidden") || string.Equals(element.GetAttribute("aria-hidden")?.Trim(), "true", StringComparison.OrdinalIgnoreCase))
+                element.Remove();
+    }
     // A small allowlist: no CSS, forms, navigation, SVG, remote fonts, or active content.
     public string Sanitize(string html, bool externalImages = false, bool preserveCid = false)
     {
+        // Remove entire hidden subtrees while their attributes still exist, including
+        // on MIME ingestion before the sanitized HTML is persisted. Parsing is inert.
+        using var source = new HtmlParser().ParseDocument(html);
+        RemoveHiddenSubtrees(source);
         var s = new HtmlSanitizer();
         s.AllowedTags.Clear();
         foreach (var tag in new[] { "p", "br", "div", "span", "b", "strong", "i", "em", "u", "blockquote", "pre", "code", "ul", "ol", "li", "table", "thead", "tbody", "tr", "td", "th", "hr", "h1", "h2", "h3", "h4" }) s.AllowedTags.Add(tag);
@@ -46,6 +57,6 @@ public sealed class EmailHtml
                 if (!externalImages || !Uri.TryCreate(e.OriginalUrl, UriKind.Absolute, out var uri) || uri.Scheme != "https" || !string.IsNullOrEmpty(uri.UserInfo)) e.SanitizedUrl = "";
             };
         }
-        return s.Sanitize(html);
+        return s.Sanitize(source.Body?.InnerHtml ?? "");
     }
 }

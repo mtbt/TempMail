@@ -91,13 +91,25 @@ projects only Subject, TextBody, and HtmlBody; it does not load attachments or
 an entire inbox. There is no fallback to an older message without an OTP in the
 latest selected message.
 
-The first match of `(?<!\d)\d{6}(?!\d)` wins, in this order: subject, plain text,
-then sanitized HTML text. Codes remain strings, preserving leading zeroes.
+The first match of `(?<!\p{Nd})[0-9]{6}(?!\p{Nd})` wins, in this order: subject,
+plain text, then sanitized HTML text. Codes contain exactly six ASCII digits and
+remain strings, preserving leading zeroes. Adjacent Unicode decimal digits also
+block a match: `١123456` and `123456７` return no code. Unicode-only codes such as
+`１２３４５６` are ignored; `１２３４５６ then 123456` yields `123456`.
 HTML is parsed inertly with the existing AngleSharp dependency and `EmailHtml`
 sanitizer. Scripts, styles, templates, comments, attributes, and hidden elements
 are not searched; HTML entities are decoded and block boundaries separate text.
 No browser, JavaScript, or external resources run. Text corresponds to the
 sanitized HTML, not a CSS/layout rendering of the original email.
+
+Before sanitization strips attributes on MIME ingestion, entire subtrees marked
+`hidden` (regardless of its value) or `aria-hidden="true"` (case-insensitive,
+ignoring surrounding whitespace) are removed. Visible siblings remain intact;
+`aria-hidden="false"` remains visible. This does not attempt CSS layout detection.
+The guarantee applies to mail received after deploying the fix to the SMTP host.
+Previously stored sanitized HTML may already have lost hidden markers; their
+original visibility cannot be recovered reliably. Existing mail is not rewritten
+or heuristically filtered, and no schema change or migration is required.
 
 Responses contain only the documented fields and use `Cache-Control: no-store`.
 No sender, body, subject, message metadata, attachment, Data Protection token, or

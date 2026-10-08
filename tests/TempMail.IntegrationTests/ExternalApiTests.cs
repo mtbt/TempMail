@@ -127,6 +127,8 @@ public sealed class ExternalApiTests : IClassFixture<MailFactory>
     [Theory]
     [InlineData("Your verification code is 123456", "654321", "<p>112233</p>", "123456")]
     [InlineData("OTP: 012345", "", "", "012345")]
+    [InlineData("１２３４５６", "Code: 123456", "<p>112233</p>", "123456")]
+    [InlineData("١٢٣٤٥٦", "Code: 012345", "<p>112233</p>", "012345")]
     [InlineData("None", "Your OTP is 654321", "<p>112233</p>", "654321")]
     [InlineData("None", "None", "<p>Your code is <strong>112233</strong></p>", "112233")]
     [InlineData("1234567", "99123456", "<p>123456789</p>", null)]
@@ -180,6 +182,41 @@ public sealed class ExternalApiTests : IClassFixture<MailFactory>
         Assert.Equal(HttpStatusCode.TooManyRequests, (await Get(c, address)).StatusCode);
         await using var scope = f.Services.CreateAsyncScope();
         Assert.Null(await scope.ServiceProvider.GetRequiredService<ReceiveService>().ValidateRecipientAsync(address, default));
+    }
+    [Theory]
+    [InlineData("<p hidden>654321</p><p>Code: 112233</p>", null, "112233")]
+    [InlineData("<div aria-hidden='true'>654321</div><p>112233</p>", null, "112233")]
+    [InlineData("<p hidden>654321</p>", null, null)]
+    [InlineData("<div hidden><span>654321</span></div><p>112233</p>", null, "112233")]
+    [InlineData("<div aria-hidden='true'><p><strong>654321</strong></p></div><p>112233</p>", null, "112233")]
+    [InlineData("<div ARIA-HIDDEN=' True \t'><span>654321</span></div><p>112233</p>", null, "112233")]
+    [InlineData("<p hidden='false'>654321</p><p>112233</p>", null, "112233")]
+    [InlineData("<script>654321</script><style>.x{width:654321px}</style><!--654321--><p data-code='654321' title='654321'>None</p><img src='https://example.com/654321'>", null, null)]
+    [InlineData("<p>Your code is <strong>112233</strong></p>", null, "112233")]
+    [InlineData("<p hidden>654321</p><p>112233</p>", "Code: 012345", "012345")]
+    [InlineData("<div aria-hidden='false'><strong>112233</strong></div>", null, "112233")]
+    [InlineData("<body hidden><p>654321</p></body>", null, null)]
+    public async Task ReceivedMimeRemovesHiddenSubtreesBeforePersistenceAndCodeRead(string html, string? text, string? expected)
+    {
+        using var c = Client(); var address = Address(); (await Post(c, address)).EnsureSuccessStatusCode();
+        using var mime = new MimeKit.MimeMessage();
+        mime.From.Add(MimeKit.MailboxAddress.Parse("sender@example.com"));
+        mime.To.Add(MimeKit.MailboxAddress.Parse(address));
+        mime.Subject = "Verification";
+        mime.Body = new MimeKit.BodyBuilder { HtmlBody = html, TextBody = text }.ToMessageBody();
+        using var raw = new MemoryStream(); await mime.WriteToAsync(raw);
+        await using (var scope = factory.Services.CreateAsyncScope())
+        {
+            await scope.ServiceProvider.GetRequiredService<ReceiveService>().ReceiveAsync("sender@example.com", [address], raw.ToArray(), default);
+            var db = scope.ServiceProvider.GetRequiredService<MailDbContext>();
+            var stored = await db.Messages.AsNoTracking().SingleAsync(x => x.Mailbox.NormalizedAddress == address);
+            // The fix must remove hidden descendants during ingestion, not just at GET.
+            if (html.Contains("hidden", StringComparison.OrdinalIgnoreCase)) Assert.DoesNotContain("654321", stored.HtmlBody);
+            if (html.Contains("112233", StringComparison.Ordinal)) Assert.Contains("112233", stored.HtmlBody);
+        }
+        var response = await Get(c, address); Assert.Equal(HttpStatusCode.OK, response.StatusCode);
+        Assert.Equal(new LatestCodeResponse(expected), await response.Content.ReadFromJsonAsync<LatestCodeResponse>());
+        Assert.Equal("no-store", response.Headers.CacheControl!.ToString());
     }
     private async Task AddMessages(string address, params MailMessage[] messages)
     {
