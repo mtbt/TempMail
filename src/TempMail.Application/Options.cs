@@ -2,7 +2,7 @@ using System.ComponentModel.DataAnnotations;
 namespace TempMail.Application;
 public sealed class TempMailOptions
 {
-    public string[] Domains { get; set; } = ["mail.example.com"];
+    public string[] Domains { get; set; } = [];
     [Range(1, 168)] public int MailboxLifetimeHours { get; set; } = 24;
     [Range(1, 168)] public int MessageLifetimeHours { get; set; } = 24;
     public bool AllowCustomAddress { get; set; } = true;

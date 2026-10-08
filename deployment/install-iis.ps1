@@ -33,6 +33,8 @@ if ($HostingBundleInstaller) {
 }
 # Inspect existing IIS before installing features/bundles or stopping production.
 if (Get-Module -ListAvailable WebAdministration) {
+    # A rerun in the same session must not reuse a provider snapshot from before a commit.
+    if (Get-Module WebAdministration) { Remove-Module WebAdministration -ErrorAction Stop }
     Import-Module WebAdministration
     Assert-TempMailIisConfiguration -SitePath $SitePath -HostName $HostName
     if (-not $HostingBundleInstaller -and -not (Get-WebGlobalModule | Where-Object Name -eq 'AspNetCoreModuleV2')) { throw 'Install the .NET 10 Hosting Bundle (after IIS), then rerun.' }
@@ -53,6 +55,16 @@ if ($HostingBundleInstaller) {
 Import-Module WebAdministration
 if (-not (Get-WebGlobalModule | Where-Object Name -eq 'AspNetCoreModuleV2')) { throw 'Install the .NET 10 Hosting Bundle (after IIS), then rerun.' }
 Assert-TempMailIisConfiguration -SitePath $SitePath -HostName $HostName
+# Windows PowerShell does not reliably load this assembly when importing the provider.
+$administrationAssembly = Join-Path $env:windir 'System32\inetsrv\Microsoft.Web.Administration.dll'
+if (-not (Test-Path -LiteralPath $administrationAssembly -PathType Leaf)) {
+    throw "IIS administration assembly missing: $administrationAssembly. Install/repair IIS management tools and rerun in 64-bit Windows PowerShell."
+}
+try {
+    Add-Type -Path $administrationAssembly -ErrorAction Stop
+} catch {
+    throw "Unable to load IIS administration assembly '$administrationAssembly': $($_.Exception.Message)"
+}
 # Replacing shared ACLs requires a maintenance window for both applications.
 Stop-TempMailService
 Stop-TempMailWeb
@@ -70,22 +82,28 @@ Set-ItemProperty 'IIS:\AppPools\TempMail' -Name startMode -Value 'AlwaysRunning'
 Set-ItemProperty 'IIS:\AppPools\TempMail' -Name processModel.idleTimeout -Value ([TimeSpan]::Zero)
 # Single Web worker is required by the database notification dispatcher. Avoid overlapping recycles.
 Set-ItemProperty 'IIS:\AppPools\TempMail' -Name recycling.disallowOverlappingRotation -Value $true
-# Create disabled in one configuration commit: never briefly serve an unconfigured app.
-if (-not (Test-Path 'IIS:\Sites\TempMail')) {
-    $manager = New-Object Microsoft.Web.Administration.ServerManager
-    try {
-        $newSite = $manager.Sites.Add('TempMail', 'http', "*:80:$HostName", $SitePath)
-        $newSite.ServerAutoStart = $false
-        $newSite.Applications['/'].ApplicationPoolName = 'TempMail'
-        $manager.CommitChanges()
-    } finally { $manager.Dispose() }
-}
-Set-ItemProperty 'IIS:\Sites\TempMail' -Name serverAutoStart -Value $false
-Stop-Website TempMail
-Set-ItemProperty 'IIS:\Sites\TempMail' -Name applicationDefaults.preloadEnabled -Value $true
-if (-not (Get-WebBinding -Name TempMail -Protocol https)) { New-WebBinding -Name TempMail -Protocol https -Port 443 -HostHeader $HostName -SslFlags 1 }
-Set-WebBinding -Name TempMail -BindingInformation "*:443:$HostName" -PropertyName sslFlags -Value 1
-(Get-WebBinding -Name TempMail -Protocol https).AddSslCertificate($CertificateThumbprint, 'My')
+# Configure the site and bindings through one ServerManager snapshot. Do not use
+# the IIS provider after this commit: its cached snapshot can omit the new site.
+$manager = New-Object Microsoft.Web.Administration.ServerManager
+try {
+    $site = $manager.Sites['TempMail']
+    if ($null -eq $site) {
+        $site = $manager.Sites.Add('TempMail', 'http', "*:80:$HostName", $SitePath)
+        $site.Applications['/'].ApplicationPoolName = 'TempMail'
+    }
+    # Create disabled in one commit: never briefly serve an unconfigured app.
+    # Existing sites and the pool have already been stopped/disabled above.
+    $site.ServerAutoStart = $false
+    $site.ApplicationDefaults['preloadEnabled'] = $true
+    $httpsBinding = $site.Bindings | Where-Object { $_.Protocol -eq 'https' -and $_.BindingInformation -eq "*:443:$HostName" }
+    if ($null -eq $httpsBinding) {
+        $httpsBinding = $site.Bindings.Add("*:443:$HostName", 'https')
+    }
+    $httpsBinding.SslFlags = [Microsoft.Web.Administration.SslFlags]::Sni
+    $httpsBinding.CertificateHash = $certificate.GetCertHash()
+    $httpsBinding.CertificateStoreName = 'My'
+    $manager.CommitChanges()
+} finally { $manager.Dispose() }
 Set-TempMailDirectoryAcl -Path $SitePath -ReadExecute 'IIS AppPool\TempMail'
 Set-TempMailDirectoryAcl -Path "$SitePath\logs" -Modify 'IIS AppPool\TempMail'
 $storageIdentities = @('IIS AppPool\TempMail')
