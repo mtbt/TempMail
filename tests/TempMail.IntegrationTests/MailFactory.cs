@@ -12,6 +12,7 @@ namespace TempMail.IntegrationTests;
 public sealed class MailFactory : WebApplicationFactory<Program>
 {
     public string Root { get; } = Path.Combine(Path.GetTempPath(), "tempmail-test-" + Guid.NewGuid().ToString("N"));
+    public string EnvironmentName { get; init; } = "Testing";
     public string? ExternalToken { get; init; } = "automation-integration-test-only";
     public int CreateLimit { get; init; } = 1000;
     public int ReadLimit { get; init; } = 10000;
@@ -19,7 +20,7 @@ public sealed class MailFactory : WebApplicationFactory<Program>
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
         Directory.CreateDirectory(Root);
-        builder.UseEnvironment("Testing");
+        builder.UseEnvironment(EnvironmentName);
         builder.UseStaticWebAssets();
         builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?> {
             ["TempMail:StoragePath"] = Path.Combine(Root, "storage"), ["TempMail:DataProtectionPath"] = Path.Combine(Root, "keys"),
