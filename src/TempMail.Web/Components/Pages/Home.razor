@@ -79,5 +79,11 @@ else
         if (Mailbox != null && left <= TimeSpan.Zero) { Mailbox = null; Selected = null; Messages = []; }
         return InvokeAsync(StateHasChanged);
     }
-    public async ValueTask DisposeAsync() { try { await JS.InvokeVoidAsync("tempMail.stop"); } catch (JSDisconnectedException) { } reference?.Dispose(); }
+    public async ValueTask DisposeAsync()
+    {
+        // Static prerender never runs OnAfterRenderAsync or initializes JavaScript.
+        if (reference == null) return;
+        try { await JS.InvokeVoidAsync("tempMail.stop"); } catch (JSDisconnectedException) { }
+        reference.Dispose();
+    }
 }

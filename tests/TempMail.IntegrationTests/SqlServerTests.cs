@@ -33,6 +33,16 @@ public sealed class SqlServerTests
             }
             var results = await Task.WhenAll(Create(), Create());
             Assert.Equal(new[] { 200, 409 }, results.Order().ToArray()); Assert.Equal(1, await db.Mailboxes.CountAsync());
+            async Task<EnsureMailboxResponse> Ensure()
+            {
+                await using var concurrent = new MailDbContext(options);
+                var service = new MailboxService(concurrent, Options.Create(new TempMailOptions()), new EmailAddressGenerator(), TimeProvider.System);
+                return await service.EnsureAsync("automation@mail.example.com", Tokens.Hash("test-ip"), default);
+            }
+            var ensured = await Task.WhenAll(Enumerable.Range(0, 10).Select(_ => Ensure()));
+            Assert.Single(ensured, x => x.Created);
+            Assert.Equal(9, ensured.Count(x => !x.Created));
+            Assert.Equal(1, await db.Mailboxes.CountAsync(x => x.NormalizedAddress == "automation@mail.example.com"));
             Assert.Empty(await db.Database.GetPendingMigrationsAsync());
         }
         finally { await db.Database.EnsureDeletedAsync(); }

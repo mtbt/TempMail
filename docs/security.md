@@ -32,3 +32,7 @@
 ## Retention and backup implications
 
 Deletion/expiration immediately removes API access. Files are garbage-collected after a one-hour race-safety grace. Deleted data may remain in backups until backup retention expires. SQL backups, attachment storage, access metadata and Data Protection keys are sensitive. Persisting keys keeps sessions usable across restarts; deleting keys logs out all browsers. Server administrators/database/storage operators are trusted and can read mail at rest. Disk/backup encryption is an operator responsibility.
+
+## Privileged automation
+
+The [automation API](automation-api.md) uses a separate fail-closed `X-Api-Token` shared key. Keep it in protected local configuration/environment. Its two endpoint metadata markers bind token enforcement and CSRF exemption; existing cookie-authenticated UI endpoints still require CSRF protection.
