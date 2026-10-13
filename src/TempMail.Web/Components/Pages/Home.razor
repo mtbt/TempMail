@@ -25,7 +25,7 @@ else
     <section class="mt-5"><div class="d-flex justify-content-between align-items-center mb-3"><h2 class="h4 mb-0">Inbox <span class="badge rounded-pill text-bg-light">@Messages.Length</span></h2><div><span class="small text-secondary me-2">@Connection</span><button class="btn btn-sm btn-outline-secondary" @onclick="Refresh">Làm mới</button></div></div>
     @if (NewMail) { <div class="alert alert-success" role="status">Inbox vừa được cập nhật.</div> }
     @if (Messages.Length == 0) { <div class="card p-5 text-center text-secondary"><span class="empty-icon">✉</span><h3 class="h5 mt-3">Đang chờ email đầu tiên</h3><p class="mb-0">Thư mới sẽ tự động xuất hiện tại đây.</p></div> }
-    else { <div class="list-group">@foreach (var message in Messages) { <button class="list-group-item list-group-item-action p-3" @onclick="() => Open(message.Id)"><div class="d-flex justify-content-between gap-2"><strong class="text-truncate">@(string.IsNullOrWhiteSpace(message.FromName) ? message.FromAddress : message.FromName)</strong><time class="small text-secondary text-nowrap">@message.ReceivedAt.ToString("HH:mm 'UTC'")</time></div><div class="d-flex justify-content-between"><span class="text-truncate">@(message.Subject.Length == 0 ? "(Không có tiêu đề)" : message.Subject)</span><span class="small text-secondary">@(message.HasAttachments ? "📎" : "") @((message.Size / 1024.0).ToString("N1")) KB</span></div></button> }</div> }
+    else { <div class="list-group">@foreach (var message in Messages) { <button @key="message.Id" class="list-group-item list-group-item-action p-3 @(Selected?.Id == message.Id ? "active" : "")" aria-current="@(Selected?.Id == message.Id ? "true" : null)" @onclick="() => Open(message.Id)"><div class="d-flex justify-content-between gap-2"><strong class="text-truncate">@(string.IsNullOrWhiteSpace(message.FromName) ? message.FromAddress : message.FromName)</strong><time class="small text-secondary text-nowrap">@message.ReceivedAt.ToString("HH:mm 'UTC'")</time></div><div class="d-flex justify-content-between"><span class="text-truncate">@(message.Subject.Length == 0 ? "(Không có tiêu đề)" : message.Subject)</span><span class="small text-secondary">@(message.HasAttachments ? "📎" : "") @((message.Size / 1024.0).ToString("N1")) KB</span></div></button> }</div> }
     </section>
 }
 @if (Selected != null)
@@ -68,9 +68,26 @@ else
     private Task Clear() => Act(async () => { if (!await JS.InvokeAsync<bool>("confirm", "Xóa toàn bộ email trong inbox?")) return; await Api<object>("/api/mailboxes/current/messages", "DELETE"); Selected = null; await LoadMessages(); });
     private Task Extend() => Act(async () => Mailbox = await Api<MailboxDto>("/api/mailboxes/current/extend", "POST"));
     private Task Copy() => Act(async () => { await JS.InvokeVoidAsync("tempMail.copy", Mailbox!.Address); Copied = true; });
-    private Task Open(Guid id) => Act(async () => { Selected = await Api<MessageDto>($"/api/messages/{id}"); ShowHtml = false; ExternalImages = false; NewMail = false; });
+    private async Task SelectMessage(Guid id)
+    {
+        Selected = await Api<MessageDto>($"/api/messages/{id}");
+        ShowHtml = string.IsNullOrWhiteSpace(Selected?.TextBody) && !string.IsNullOrWhiteSpace(Selected?.HtmlBody);
+        ExternalImages = false;
+    }
+    private Task Open(Guid id) => Act(async () => { await SelectMessage(id); NewMail = false; });
     private Task DeleteMessage() => Act(async () => { await Api<object>($"/api/messages/{Selected!.Id}", "DELETE"); Selected = null; await LoadMessages(); });
-    [JSInvokable] public async Task InboxChanged() { await Act(LoadCurrent); NewMail = true; await InvokeAsync(StateHasChanged); }
+    [JSInvokable] public async Task InboxChanged()
+    {
+        var known = Messages.Select(x => x.Id).ToHashSet();
+        await Act(async () =>
+        {
+            await LoadCurrent();
+            var newest = Messages.FirstOrDefault(x => !known.Contains(x.Id));
+            if (newest != null) await SelectMessage(newest.Id);
+        });
+        NewMail = true;
+        await InvokeAsync(StateHasChanged);
+    }
     [JSInvokable] public Task Tick(string connection)
     {
         Connection = connection;
