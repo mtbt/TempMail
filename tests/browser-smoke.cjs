@@ -24,10 +24,24 @@ async function smtp(address) {
   const browser = await chromium.launch({ executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium', headless: true, args: ['--no-sandbox'] });
   try {
     const context = await browser.newContext({ ignoreHTTPSErrors: true });
-    const page = await context.newPage(); const errors = []; let trackingRequests = 0;
+    const page = await context.newPage(); const errors = [], unexpectedHttp = []; let trackingRequests = 0;
+    const expectedHttp = new Set(['404 /favicon.ico', '404 /api/mailboxes/current', '401 /api/admin/dashboard']);
     page.on('pageerror', error => { errors.push(error.message); console.error('PAGEERROR', error.message); });
-    page.on('console', message => { if (message.type() === 'error') { errors.push('Console: ' + message.text()); console.error('CONSOLE', message.text()); } });
-    page.on('response', response => { if (response.status() >= 400) console.error('HTTP', response.status(), new URL(response.url()).pathname); });
+    page.on('console', message => {
+      if (message.type() !== 'error') return;
+      const value = message.text();
+      console.error('CONSOLE', value);
+      // Chromium mirrors expected 404/401 fetches as generic console errors. HTTP status
+      // validation below handles those precisely; retain all non-resource console errors
+      // so Blazor circuit/WebSocket failures still fail the smoke test.
+      if (!value.startsWith('Failed to load resource: the server responded with a status of')) errors.push('Console: ' + value);
+    });
+    page.on('response', response => {
+      if (response.status() < 400) return;
+      const entry = `${response.status()} ${new URL(response.url()).pathname}`;
+      console.error('HTTP', entry);
+      if (!expectedHttp.has(entry)) unexpectedHttp.push(entry);
+    });
     page.on('request', req => { if (req.url().includes('tracking.invalid')) trackingRequests++; });
     page.on('dialog', dialog => { errors.push('Unexpected JS dialog'); dialog.dismiss(); });
     await page.goto(process.env.TEMPMAIL_TEST_URL);
@@ -63,6 +77,7 @@ async function smtp(address) {
     await page.getByRole('button', { name: 'Đăng nhập', exact: true }).click();
     await page.getByText('Domain nhận email', { exact: true }).waitFor().catch(async error => { console.error('ADMIN PAGE', await page.locator('body').innerText()); throw error; });
     await page.screenshot({ path: 'artifacts/admin-mobile.png', fullPage: true });
+    assert.deepEqual(unexpectedHttp, []);
     assert.deepEqual(errors, []);
     console.log('PASS: Blazor create, SMTP -> DB -> SignalR -> auto-open newest message, sandbox HTML, mobile layout, anonymous isolation, Identity admin login.');
   } finally { await browser.close(); }
