@@ -19,10 +19,12 @@ public sealed class BrowserTests
     public async Task BrowserCreatesMailboxReceivesRealtimeMailAndAdminSignsIn()
     {
         // Browser behavior is the subject of this smoke test; production TLS is accepted separately.
-        // Use loopback HTTP here to avoid machine-specific self-signed TLS policy blocking Chrome
-        // before the Blazor/SignalR regression can even execute.
-        using var factory = new MailFactory(); factory.UseKestrel(o => o.Listen(IPAddress.Loopback, 0)); factory.StartServer();
-        var url = factory.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single();
+        // Use loopback HTTP with Development cookie/antiforgery policy so machine-specific
+        // self-signed TLS behavior cannot block the Blazor/SignalR regression before it starts.
+        using var factory = new MailFactory { EnvironmentName = "Development" };
+        factory.UseKestrel(o => o.Listen(IPAddress.Loopback, 0)); factory.StartServer();
+        var bound = new Uri(factory.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single());
+        var url = new UriBuilder(bound) { Host = "localhost" }.Uri.GetLeftPart(UriPartial.Authority);
         var password = "Aa1!" + Convert.ToHexString(RandomNumberGenerator.GetBytes(20));
         await using (var scope = factory.Services.CreateAsyncScope())
         {
