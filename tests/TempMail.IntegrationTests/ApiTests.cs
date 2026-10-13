@@ -37,7 +37,7 @@ public sealed class ApiTests : IClassFixture<MailFactory>
             var msg = await db.Messages.Include(x => x.Attachments).SingleAsync(x => x.Mailbox.NormalizedAddress == boxA.Address); messageId = msg.Id; attachmentId = msg.Attachments.Single().Id;
             Assert.True(await db.Events.AnyAsync(x => x.MailboxPublicId == boxA.PublicId));
         }
-        foreach (var path in new[] { $"/api/messages/{messageId}", $"/api/messages/{messageId}/html", $"/api/messages/{messageId}/html?images=true", $"/api/messages/{messageId}/attachments/{attachmentId}" })
+        foreach (var path in new[] { $"/api/messages/{messageId}", $"/api/messages/{messageId}/metadata", $"/api/messages/{messageId}/text", $"/api/messages/{messageId}/html", $"/api/messages/{messageId}/html?images=true", $"/api/messages/{messageId}/attachments/{attachmentId}" })
         {
             Assert.Equal(HttpStatusCode.NotFound, (await b.GetAsync(path)).StatusCode);
             Assert.Equal(HttpStatusCode.NotFound, (await anonymous.GetAsync(path)).StatusCode);
@@ -46,6 +46,10 @@ public sealed class ApiTests : IClassFixture<MailFactory>
         Assert.Equal(HttpStatusCode.NotFound, (await b.DeleteAsync($"/api/messages/{messageId}")).StatusCode);
         var detail = await a.GetFromJsonAsync<MessageDto>($"/api/messages/{messageId}");
         Assert.DoesNotContain("script", detail!.HtmlBody); Assert.DoesNotContain("onclick", detail.HtmlBody); Assert.DoesNotContain("https:", detail.HtmlBody);
+        var metadata = await a.GetFromJsonAsync<MessageDetailDto>($"/api/messages/{messageId}/metadata");
+        Assert.Equal(messageId, metadata!.Id); Assert.False(metadata.HasTextBody); Assert.True(metadata.HasHtmlBody); Assert.Single(metadata.Attachments);
+        var text = await a.GetAsync($"/api/messages/{messageId}/text");
+        Assert.Equal("text/plain", text.Content.Headers.ContentType!.MediaType); Assert.Equal("", await text.Content.ReadAsStringAsync());
         var attachment = await a.GetAsync($"/api/messages/{messageId}/attachments/{attachmentId}");
         Assert.Equal("secret", await attachment.Content.ReadAsStringAsync()); Assert.Equal("attachment", attachment.Content.Headers.ContentDisposition!.DispositionType); Assert.Equal("nosniff", attachment.Headers.GetValues("X-Content-Type-Options").Single());
         Assert.Equal(HttpStatusCode.NoContent, (await a.DeleteAsync($"/api/messages/{messageId}")).StatusCode);
