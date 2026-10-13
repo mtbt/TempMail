@@ -204,13 +204,17 @@ public sealed class SmtpWorker(IServiceScopeFactory scopes, IOptions<SmtpOptions
                             await Reply("354 End with <CRLF>.<CRLF>");
                             using (var data = new MemoryStream())
                             {
+                                var maxMessageBytes = o.MaxMessageSizeMB * 1024 * 1024;
                                 while (true)
                                 {
-                                    var bytes = await Read(1000);
+                                    // Commands remain capped at 512 bytes, but DATA lines may be much longer
+                                    // in real-world MIME messages. Bound a single DATA line by the total
+                                    // configured message size instead of the SMTP command-line limit.
+                                    var bytes = await Read(maxMessageBytes);
                                     if (bytes == null) return;
                                     if (bytes.Length == 1 && bytes[0] == '.') break;
                                     var offset = bytes.Length > 0 && bytes[0] == '.' ? 1 : 0;
-                                    if (data.Length + bytes.Length - offset + 2 > o.MaxMessageSizeMB * 1024L * 1024) { await Reply("552 Message too large"); return; }
+                                    if (data.Length + bytes.Length - offset + 2 > maxMessageBytes) { await Reply("552 Message too large"); return; }
                                     data.Write(bytes, offset, bytes.Length - offset); data.Write("\r\n"u8);
                                 }
                                 var watch = System.Diagnostics.Stopwatch.StartNew();
@@ -234,7 +238,7 @@ public sealed class SmtpWorker(IServiceScopeFactory scopes, IOptions<SmtpOptions
                     }
                 }
             }
-            catch (InvalidDataException) { await Reply("500 Line too long or invalid framing"); }
+            catch (InvalidDataException ex) { log.LogWarning("SMTP invalid framing {RemoteIp} {Reason}", ip, ex.Message); await Reply("500 Line too long or invalid framing"); }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { log.LogInformation("SMTP connection timed out or stopped {RemoteIp}", ip); }
             catch (IOException) { log.LogInformation("SMTP peer disconnected {RemoteIp}", ip); }
             catch (Exception ex) { log.LogError("SMTP session failed {ErrorType} {RemoteIp}", ex.GetType().Name, ip); }
