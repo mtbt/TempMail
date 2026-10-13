@@ -36,6 +36,20 @@ public static class Api
             var message = await m.MessageAsync(s.Require(c), id, ct);
             return new MessageDto(message.Id, message.FromAddress, message.FromName, message.To, message.Cc, message.Subject, message.TextBody, html.Sanitize(message.HtmlBody), message.ReceivedAt, message.Attachments.Select(x => new AttachmentDto(x.Id, x.FileName, x.ContentType, x.Size, x.ContentId)).ToArray());
         }).RequireRateLimiting("read");
+        app.MapGet("/api/messages/{id:guid}/metadata", async (Guid id, HttpContext c, MailboxSession s, MailboxService m, CancellationToken ct) =>
+        {
+            var message = await m.MessageAsync(s.Require(c), id, ct);
+            return new MessageDetailDto(message.Id, message.FromAddress, message.FromName, message.To, message.Cc, message.Subject, message.ReceivedAt,
+                !string.IsNullOrWhiteSpace(message.TextBody), !string.IsNullOrWhiteSpace(message.HtmlBody),
+                message.Attachments.Select(x => new AttachmentDto(x.Id, x.FileName, x.ContentType, x.Size, x.ContentId)).ToArray());
+        }).RequireRateLimiting("read");
+        app.MapGet("/api/messages/{id:guid}/text", async (Guid id, HttpContext c, MailboxSession s, MailboxService m, CancellationToken ct) =>
+        {
+            var message = await m.MessageAsync(s.Require(c), id, ct);
+            c.Response.Headers.ContentSecurityPolicy = "default-src 'none'; frame-ancestors 'self'; sandbox";
+            c.Response.Headers.XContentTypeOptions = "nosniff";
+            return Results.Text(message.TextBody ?? "", "text/plain; charset=utf-8", Encoding.UTF8);
+        }).RequireRateLimiting("read");
         app.MapGet("/api/messages/{id:guid}/html", async (Guid id, bool? images, HttpContext c, MailboxSession s, MailboxService m, EmailRenderer renderer, CancellationToken ct) =>
         {
             var message = await m.MessageAsync(s.Require(c), id, ct);
