@@ -112,9 +112,11 @@ public sealed class SmtpProtocolTests
         using var reader = new StreamReader(client.GetStream(), Encoding.ASCII);
         await using var writer = new StreamWriter(client.GetStream(), Encoding.ASCII) { NewLine = "\r\n", AutoFlush = true };
 
-        Assert.StartsWith("220", await reader.ReadLineAsync(ct));
+        var banner = await reader.ReadLineAsync(ct) ?? throw new IOException("Unexpected EOF");
+        Assert.StartsWith("220", banner);
         await writer.WriteLineAsync("EHLO " + new string('a', 600));
-        Assert.StartsWith("500 Line too long or invalid framing", await reader.ReadLineAsync(ct));
+        var response = await reader.ReadLineAsync(ct) ?? throw new IOException("Unexpected EOF");
+        Assert.StartsWith("500 Line too long or invalid framing", response);
         await session;
     }
 }
