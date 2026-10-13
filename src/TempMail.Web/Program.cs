@@ -36,8 +36,9 @@ builder.Services.AddAuthorization(o => o.AddPolicy("Admin", p => p.RequireRole("
 builder.Services.AddAntiforgery(o => { o.HeaderName = "X-CSRF-TOKEN"; o.Cookie.SecurePolicy = builder.Environment.IsDevelopment() ? CookieSecurePolicy.SameAsRequest : CookieSecurePolicy.Always; o.Cookie.SameSite = SameSiteMode.Strict; });
 builder.Services.AddSingleton<MailboxSession>();
 builder.Services.AddProblemDetails();
-builder.Services.AddRazorComponents().AddInteractiveServerComponents();
 builder.Services.AddSignalR(o => { o.MaximumReceiveMessageSize = 4096; o.EnableDetailedErrors = false; });
+builder.Services.AddRazorComponents().AddInteractiveServerComponents()
+    .AddHubOptions(o => { o.MaximumReceiveMessageSize = 64 * 1024; o.EnableDetailedErrors = false; });
 builder.Services.AddRateLimiter(o =>
 {
     foreach (var policy in new[] { "automation-create", "automation-read" })
