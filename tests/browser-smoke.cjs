@@ -52,8 +52,9 @@ async function smtp(address) {
 
     const mail = await smtp('browser-test@mail.example.com');
     await mail.send('Older message', 'text/plain; charset=utf-8', 'Old body');
-    await page.getByText('Older message', { exact: true }).waitFor({ timeout: 10000 });
-    await page.getByText('Older message', { exact: true }).click();
+    const olderRow = page.locator('button.list-group-item').filter({ hasText: 'Older message' });
+    await olderRow.waitFor({ timeout: 10000 });
+    await olderRow.click();
     await page.locator('section.card.mt-4 h2').filter({ hasText: 'Older message' }).waitFor();
 
     const largeBody = '<p>Safe email body</p><div>' + 'A'.repeat(12000) + '</div><script>alert(\'xss\')</script><img src="https://tracking.invalid/pixel">';
