@@ -26,7 +26,7 @@ async function smtp(address) {
     const context = await browser.newContext({ ignoreHTTPSErrors: true });
     const page = await context.newPage(); const errors = []; let trackingRequests = 0;
     page.on('pageerror', error => { errors.push(error.message); console.error('PAGEERROR', error.message); });
-    page.on('console', message => { if (message.type() === 'error') console.error('CONSOLE', message.text()); });
+    page.on('console', message => { if (message.type() === 'error') { errors.push('Console: ' + message.text()); console.error('CONSOLE', message.text()); } });
     page.on('response', response => { if (response.status() >= 400) console.error('HTTP', response.status(), new URL(response.url()).pathname); });
     page.on('request', req => { if (req.url().includes('tracking.invalid')) trackingRequests++; });
     page.on('dialog', dialog => { errors.push('Unexpected JS dialog'); dialog.dismiss(); });
@@ -42,10 +42,11 @@ async function smtp(address) {
     await page.getByText('Older message', { exact: true }).click();
     await page.locator('section.card.mt-4 h2').filter({ hasText: 'Older message' }).waitFor();
 
-    await mail.send('Browser realtime proof', 'text/html; charset=utf-8', '<p>Safe email body</p><script>alert(\'xss\')</script><img src="https://tracking.invalid/pixel">');
+    const largeBody = '<p>Safe email body</p><div>' + 'A'.repeat(12000) + '</div><script>alert(\'xss\')</script><img src="https://tracking.invalid/pixel">';
+    await mail.send('Browser realtime proof', 'text/html; charset=utf-8', largeBody);
     await page.getByText('Browser realtime proof', { exact: true }).first().waitFor({ timeout: 10000 });
     await page.locator('section.card.mt-4 h2').filter({ hasText: 'Browser realtime proof' }).waitFor({ timeout: 10000 });
-    const frame = page.frameLocator('iframe'); await frame.getByText('Safe email body').waitFor();
+    const frame = page.frameLocator('iframe[title="Nội dung email đã lọc"]'); await frame.getByText('Safe email body').waitFor();
     assert.equal(await frame.locator('script').count(), 0); assert.equal(await frame.locator('img').count(), 0); assert.equal(trackingRequests, 0);
     await mail.close();
     assert.equal(await page.locator('iframe').getAttribute('sandbox'), '');
@@ -55,6 +56,8 @@ async function smtp(address) {
     const other = await browser.newContext({ ignoreHTTPSErrors: true });
     const list = await page.evaluate(() => tempMail.api('/api/messages')); const id = list.data[0].id;
     assert.equal((await other.request.get(`${process.env.TEMPMAIL_TEST_URL}/api/messages/${id}`)).status(), 404);
+    assert.equal((await other.request.get(`${process.env.TEMPMAIL_TEST_URL}/api/messages/${id}/metadata`)).status(), 404);
+    assert.equal((await other.request.get(`${process.env.TEMPMAIL_TEST_URL}/api/messages/${id}/text`)).status(), 404);
     await page.goto(process.env.TEMPMAIL_TEST_URL + '/admin');
     await page.locator('#admin-email').fill('admin@example.com'); await page.locator('#admin-password').fill(process.env.TEMPMAIL_TEST_ADMIN_PASSWORD);
     await page.getByRole('button', { name: 'Đăng nhập', exact: true }).click();
