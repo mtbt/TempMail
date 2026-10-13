@@ -20,7 +20,15 @@ public sealed class BrowserTests
     public async Task BrowserCreatesMailboxReceivesRealtimeMailAndAdminSignsIn()
     {
         using var rsa = RSA.Create(2048);
-        var request = new CertificateRequest("CN=localhost", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        var request = new CertificateRequest("CN=TempMail Browser Test", rsa, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+        var san = new SubjectAlternativeNameBuilder();
+        san.AddDnsName("localhost");
+        san.AddIpAddress(IPAddress.Loopback);
+        request.CertificateExtensions.Add(san.Build());
+        request.CertificateExtensions.Add(new X509KeyUsageExtension(X509KeyUsageFlags.DigitalSignature, false));
+        var serverAuth = new OidCollection();
+        serverAuth.Add(new Oid("1.3.6.1.5.5.7.3.1"));
+        request.CertificateExtensions.Add(new X509EnhancedKeyUsageExtension(serverAuth, false));
         using var certificate = request.CreateSelfSigned(DateTimeOffset.UtcNow.AddMinutes(-1), DateTimeOffset.UtcNow.AddDays(1));
         using var factory = new MailFactory(); factory.UseKestrel(o => o.Listen(IPAddress.Loopback, 0, listen => listen.UseHttps(certificate))); factory.StartServer();
         var url = factory.Services.GetRequiredService<IServer>().Features.Get<IServerAddressesFeature>()!.Addresses.Single();
