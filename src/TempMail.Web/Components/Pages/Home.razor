@@ -31,9 +31,9 @@ else
 @if (Selected != null)
 {
     <section class="card mt-4"><div class="card-body"><div class="d-flex justify-content-between"><h2 class="h4">@Selected.Subject</h2><button class="btn btn-sm btn-outline-secondary" @onclick="() => Selected = null">Đóng</button></div><p class="small text-secondary">@Selected.FromName &lt;@Selected.FromAddress&gt;<br />To: @Selected.To<br />Cc: @Selected.Cc</p>
-    <div class="d-flex gap-2 mb-3"><button class="btn btn-sm btn-outline-secondary" @onclick="() => ShowHtml = !ShowHtml">@(ShowHtml ? "Xem text" : "Xem HTML an toàn")</button>@if (ShowHtml) { <button class="btn btn-sm btn-outline-warning" @onclick="() => ExternalImages = !ExternalImages">@(ExternalImages ? "Chặn hình ảnh bên ngoài" : "Hiển thị hình ảnh bên ngoài (có thể bị theo dõi)")</button> }<button class="btn btn-sm btn-outline-danger" @onclick="DeleteMessage">Xóa thư</button></div>
-    @if (ShowHtml) { <iframe class="email-frame" title="Nội dung email đã lọc" sandbox="" referrerpolicy="no-referrer" src="@($"/api/messages/{Selected.Id}/html?images={ExternalImages.ToString().ToLowerInvariant()}")"></iframe> }
-    else { <pre class="email-text">@Selected.TextBody</pre> }
+    <div class="d-flex gap-2 mb-3">@if (Selected.HasTextBody && Selected.HasHtmlBody) { <button class="btn btn-sm btn-outline-secondary" @onclick="() => ShowHtml = !ShowHtml">@(ShowHtml ? "Xem text" : "Xem HTML an toàn")</button> }@if (ShowHtml && Selected.HasHtmlBody) { <button class="btn btn-sm btn-outline-warning" @onclick="() => ExternalImages = !ExternalImages">@(ExternalImages ? "Chặn hình ảnh bên ngoài" : "Hiển thị hình ảnh bên ngoài (có thể bị theo dõi)")</button> }<button class="btn btn-sm btn-outline-danger" @onclick="DeleteMessage">Xóa thư</button></div>
+    @if (ShowHtml && Selected.HasHtmlBody) { <iframe class="email-frame" title="Nội dung email đã lọc" sandbox="" referrerpolicy="no-referrer" src="@($"/api/messages/{Selected.Id}/html?images={ExternalImages.ToString().ToLowerInvariant()}")"></iframe> }
+    else { <iframe class="email-frame" title="Nội dung email dạng văn bản" sandbox="" referrerpolicy="no-referrer" src="@($"/api/messages/{Selected.Id}/text")"></iframe> }
     @if (Selected.Attachments.Length > 0) { <h3 class="h6 mt-3">Tệp đính kèm — chỉ tải khi tin cậy người gửi</h3><ul>@foreach (var a in Selected.Attachments) { <li><a href="@($"/api/messages/{Selected.Id}/attachments/{a.Id}")" download>@a.FileName</a> (@a.Size bytes) @(a.ContentId != null ? "· inline" : "")</li> }</ul> }
     </div></section>
 }
@@ -41,7 +41,7 @@ else
     [Parameter] public Guid? PublicId { get; set; }
     private MailboxDto? Mailbox;
     private MessageSummary[] Messages = [];
-    private MessageDto? Selected;
+    private MessageDetailDto? Selected;
     private string[] Domains = [];
     private string Domain = "", Local = "", Remaining = "", Connection = "Đang kết nối…";
     private bool Ready, Copied, NewMail, ShowHtml, ExternalImages;
@@ -70,8 +70,8 @@ else
     private Task Copy() => Act(async () => { await JS.InvokeVoidAsync("tempMail.copy", Mailbox!.Address); Copied = true; });
     private async Task SelectMessage(Guid id)
     {
-        Selected = await Api<MessageDto>($"/api/messages/{id}");
-        ShowHtml = string.IsNullOrWhiteSpace(Selected?.TextBody) && !string.IsNullOrWhiteSpace(Selected?.HtmlBody);
+        Selected = await Api<MessageDetailDto>($"/api/messages/{id}/metadata");
+        ShowHtml = Selected is { HasTextBody: false, HasHtmlBody: true };
         ExternalImages = false;
     }
     private Task Open(Guid id) => Act(async () => { await SelectMessage(id); NewMail = false; });
