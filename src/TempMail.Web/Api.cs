@@ -48,7 +48,7 @@ public static class Api
             var message = await m.MessageAsync(s.Require(c), id, ct);
             c.Response.Headers.ContentSecurityPolicy = "default-src 'none'; frame-ancestors 'self'; sandbox";
             c.Response.Headers["X-Content-Type-Options"] = "nosniff";
-            return Results.Text(message.TextBody ?? "", "text/plain; charset=utf-8", Encoding.UTF8);
+            return Results.Text(message.TextBody ?? "", "text/plain", Encoding.UTF8);
         }).RequireRateLimiting("read");
         app.MapGet("/api/messages/{id:guid}/html", async (Guid id, bool? images, HttpContext c, MailboxSession s, MailboxService m, EmailRenderer renderer, CancellationToken ct) =>
         {
