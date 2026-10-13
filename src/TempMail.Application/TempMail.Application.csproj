@@ -1,4 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk">
+<PropertyGroup><RuntimeIdentifiers>win-x64</RuntimeIdentifiers></PropertyGroup>
 <ItemGroup>
 <ProjectReference Include="../TempMail.Domain/TempMail.Domain.csproj" />
 <ProjectReference Include="../TempMail.Shared/TempMail.Shared.csproj" />
