@@ -64,4 +64,57 @@ public sealed class SmtpProtocolTests
         var messages = await browser.GetFromJsonAsync<MessageSummary[]>("/api/messages"); var message = Assert.Single(messages!); Assert.Equal("Real TCP test", message.Subject);
         var detail = await browser.GetFromJsonAsync<MessageDto>($"/api/messages/{message.Id}"); Assert.Contains(".dot-stuffed", detail!.TextBody);
     }
+
+    [Fact] public async Task DataAcceptsBodyLineLongerThan1000Bytes()
+    {
+        using var factory = new MailFactory(); using var browser = factory.Browser(); await ApiTests.Session(browser);
+        var response = await browser.PostAsJsonAsync("/api/mailboxes", new CreateMailboxRequest("long-line", "mail.example.com")); response.EnsureSuccessStatusCode();
+        var worker = ActivatorUtilities.CreateInstance<SmtpWorker>(factory.Services);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20)); var ct = timeout.Token;
+        var listener = new TcpListener(IPAddress.Loopback, 0); listener.Start();
+        using var client = new TcpClient(); await client.ConnectAsync(IPAddress.Loopback, ((IPEndPoint)listener.LocalEndpoint).Port, ct);
+        var serverClient = await listener.AcceptTcpClientAsync(ct); listener.Stop();
+        var session = worker.HandleAsync(serverClient, "127.0.0.1", ct);
+        using var reader = new StreamReader(client.GetStream(), Encoding.ASCII);
+        await using var writer = new StreamWriter(client.GetStream(), Encoding.ASCII) { NewLine = "\r\n", AutoFlush = true };
+        async Task<string> Read() => await reader.ReadLineAsync(ct) ?? throw new IOException("Unexpected EOF");
+        async Task Expect(string command, string code) { await writer.WriteLineAsync(command); Assert.StartsWith(code, await Read()); }
+
+        Assert.StartsWith("220", await Read());
+        await writer.WriteLineAsync("EHLO test.example");
+        string line; do { line = await Read(); Assert.StartsWith("250", line); } while (line.StartsWith("250-", StringComparison.Ordinal));
+        await Expect("MAIL FROM:<sender@example.com>", "250");
+        await Expect("RCPT TO:<long-line@mail.example.com>", "250");
+        await Expect("DATA", "354");
+
+        var longLine = new string('A', 1200);
+        await writer.WriteAsync($"From: sender@example.com\r\nTo: long-line@mail.example.com\r\nSubject: Long DATA line\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n{longLine}\r\n.\r\n");
+        await writer.FlushAsync(ct);
+        Assert.StartsWith("250 Message accepted", await Read());
+        await Expect("QUIT", "221");
+        await session;
+
+        var messages = await browser.GetFromJsonAsync<MessageSummary[]>("/api/messages");
+        var message = Assert.Single(messages!);
+        var detail = await browser.GetFromJsonAsync<MessageDto>($"/api/messages/{message.Id}");
+        Assert.Contains(longLine, detail!.TextBody);
+    }
+
+    [Fact] public async Task CommandLinesRemainLimitedTo512Bytes()
+    {
+        using var factory = new MailFactory();
+        var worker = ActivatorUtilities.CreateInstance<SmtpWorker>(factory.Services);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(20)); var ct = timeout.Token;
+        var listener = new TcpListener(IPAddress.Loopback, 0); listener.Start();
+        using var client = new TcpClient(); await client.ConnectAsync(IPAddress.Loopback, ((IPEndPoint)listener.LocalEndpoint).Port, ct);
+        var serverClient = await listener.AcceptTcpClientAsync(ct); listener.Stop();
+        var session = worker.HandleAsync(serverClient, "127.0.0.1", ct);
+        using var reader = new StreamReader(client.GetStream(), Encoding.ASCII);
+        await using var writer = new StreamWriter(client.GetStream(), Encoding.ASCII) { NewLine = "\r\n", AutoFlush = true };
+
+        Assert.StartsWith("220", await reader.ReadLineAsync(ct));
+        await writer.WriteLineAsync("EHLO " + new string('a', 600));
+        Assert.StartsWith("500 Line too long or invalid framing", await reader.ReadLineAsync(ct));
+        await session;
+    }
 }
