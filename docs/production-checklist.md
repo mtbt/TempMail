@@ -180,9 +180,13 @@ date, sanitized evidence and result for every stage. Keep secrets out of evidenc
   its executable directory, even when SCM's working directory is System32.
 - [ ] Persist Data Protection keys and keep the application name stable. On Windows
   production, the default is user-scope DPAPI: stable pool identity/profile is needed.
-  For restore to another server, prefer a dedicated certificate, securely back up its
-  private key and grant Web read. Confirm the framework resolves the configured
-  thumbprint in the intended store under the pool identity. Never give SMTP that key.
+  For restore to another server, prefer a dedicated RSA certificate in LocalMachine\My
+  and securely back up its private key. Confirm the configured thumbprint matches
+  exactly one certificate with an RSA private key under the pool identity. A self-signed
+  certificate is supported (`validOnly: false`); this is not a TLS trust certificate
+  and must not be added to Trusted Root. Restrict private-key read access to
+  `IIS APPPOOL\TempMail` plus trusted administrators/SYSTEM, removing broad inherited
+  access. Never give SMTP that key. See [deployment guidance](deployment.md#5-iis-site-and-acl).
 - [ ] Test cookie/mailbox access across pool recycle, service restart and reboot;
   restore onto an isolated replacement server. Backing up DPAPI-encrypted XML alone
   is not sufficient for cross-machine recovery. Retain old keys/certificates while
