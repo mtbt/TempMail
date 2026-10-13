@@ -9,4 +9,10 @@ artifacts/
 **/appsettings.Local.json
 *.user
 *.pfx
+*.p12
+*.key
+*.pem
+*.bak
+*.trn
 .env
+.env.*

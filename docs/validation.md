@@ -1,5 +1,55 @@
 # Validation record
 
+## Production readiness audit (2026-10-07)
+
+Started from a clean `feature/production-readiness` at STARTTLS commit
+`aced063c372d812621782110bab0c48c1bbfdd1b`. No reset/fetch of the stale local
+`origin/main` was used. STARTTLS implementation and all tests remain intact.
+
+Current Linux Cloud results (.NET SDK 10.0.401 / runtime 10.0.12):
+
+| Check | Current result |
+|---|---|
+| Restore | Passed; all projects restored/up to date with existing package cache |
+| Release build | Passed: 0 warnings, 0 errors |
+| Release tests | **Blocked by environment**, exit 1 before test execution |
+| EF pending model changes | None |
+| Idempotent SQL generation | Passed; byte-identical to tracked `deployment/migrate.sql` |
+| Git whitespace / documentation links | Passed |
+| Secret review | No private-key artifacts or actual secrets found in reviewed tracked files; production connection settings remain empty |
+| PowerShell | Static source review only; no PowerShell runtime installed here; Windows execution required |
+
+Restore, build and test were run sequentially, without `--no-restore`, using
+`-m:1 -p:UseSharedCompilation=false` to avoid sandbox-denied MSBuild named-pipe
+communication. This is an invocation-only adjustment, not a source change.
+The earlier multi-process MSBuild failure was `SocketException (13): Permission
+denied` in `NamedPipeServerStream`. Full current test logs show the same sandbox
+restriction at VSTest `SocketServer.Start` / `TcpListener`, **before either test
+assembly executes**. A network-enabled retry was cancelled before execution.
+There is no current passing-test count and no evidence of a source regression
+from this runner failure. Historical passing results below are not a new pass.
+
+The two existing opt-in tests are unchanged: Chromium requires
+`TEMPMAIL_BROWSER_SMOKE=1` plus Playwright/Chromium; actual SQL Server requires
+`TempMailTest__SqlConnection` for a disposable test instance. Neither is configured
+for this run. Because the runner aborts before discovery/execution, these are
+expected skip conditions, not a newly observed skipped-test result. No test was
+removed, disabled, filtered or changed to obtain a pass.
+
+Full local logs: `/tmp/production-final-restore.log`,
+`/tmp/production-final-build.log`, `/tmp/production-final-test.log` (ephemeral,
+not release artifacts). Rerun all three commands on an executor permitting local
+sockets and complete [production-checklist.md](production-checklist.md) before
+release. IIS, Windows Service/recovery, real SQL Server, Windows Certificate Store,
+private-key ACLs, DPAPI, Schannel and external TCP 25/delivery/restore are all
+**Windows Server acceptance required**; none was validated by this audit in Cloud.
+
+Changes reviewed: dedicated directory ACL replacement and path/reparse guards;
+stopped IIS deployment with explicit activation; checked existing identities and
+bindings; bounded copy retries; reconciled firewall rules; service SID/autostart/
+recovery setup; correct `TempMailSmtp` SCM name and executable-relative SMTP logs;
+private-key/backup ignore rules; ordered deployment and restore acceptance.
+
 ## STARTTLS change (2026-10-07)
 
 Validated in Linux with .NET SDK 10.0.401 / runtime 10.0.12:
